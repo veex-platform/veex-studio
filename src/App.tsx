@@ -15,7 +15,7 @@ import '@xyflow/react/dist/style.css';
 import './index.css';
 import ActionNode from './components/ActionNode';
 import Library from './components/Library';
-import { Download, Database, ListTree, Zap, ChevronDown, UserCircle, Trash2, Settings, Maximize2, Minimize2, Minus } from 'lucide-react';
+import { Download, Database, ListTree, Zap, ChevronDown, UserCircle, Trash2, Settings, Maximize2, Minimize2, Minus, Loader2, CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import SettingsModal from './components/SettingsModal';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -59,29 +59,37 @@ function Studio() {
   const [projectConfig, setProjectConfig] = useState({
     target: 'esp32',
     wifi: { ssid: 'Factory_Guest', password: 'secure_iot_pass' },
-    mqtt: { broker: 'tcp://broker.emqx.io:1883' }
+    mqtt: { broker: 'tcp://broker.emqx.io:1883' },
+    registry: { url: import.meta.env.VITE_REGISTRY_URL || 'https://registry.veexplatform.com/api/v1' }
   });
   const [remoteTemplates, setRemoteTemplates] = useState<any[]>([]);
+  const [availableDevices, setAvailableDevices] = useState<any[]>([]);
+  const [targetDevice, setTargetDevice] = useState<string>("all");
+  const [statusType, setStatusType] = useState<'info' | 'success' | 'error' | 'loading'>('info');
 
   // Industrial Connectivity: Dynamic Backend Discovery
   const registryUrl = useMemo(() => {
-    const envUrl = import.meta.env.VITE_REGISTRY_URL;
-    if (envUrl) {
-      if (envUrl.startsWith('http')) return envUrl;
-      // Handle relative paths (e.g., /api/v1)
-      return `${window.location.origin}${envUrl}`;
+    const configUrl = projectConfig.registry?.url;
+    if (configUrl) {
+      if (configUrl.startsWith('http')) return configUrl;
+      // Handle relative paths
+      if (configUrl.startsWith('/')) return `${window.location.origin}${configUrl}`;
+      return configUrl;
     }
-    // Production default: Cloud Registry
-    // For local development, set VITE_REGISTRY_URL=http://localhost:80/api/v1
     return 'https://registry.veexplatform.com/api/v1';
-  }, []);
+  }, [projectConfig.registry?.url]);
 
-  // Fetch templates from Platform
+  // Fetch templates and devices from Platform
   React.useEffect(() => {
     fetch(`${registryUrl}/dev/templates`)
       .then(res => res.json())
       .then(data => setRemoteTemplates(data))
       .catch(() => console.warn("Registry templates offline"));
+
+    fetch(`${registryUrl}/admin/devices`)
+      .then(res => res.json())
+      .then(data => setAvailableDevices(data))
+      .catch(() => console.warn("Registry devices offline"));
   }, [registryUrl]);
 
   const onConnect = useCallback(
@@ -146,7 +154,8 @@ function Studio() {
 
   const onDeploy = async () => {
     setDeploying(true);
-    setStatus("Building artifact...");
+    setStatusType('loading');
+    setStatus("Building industrial artifact...");
     try {
       const response = await fetch(`${registryUrl}/dev/build`, {
         method: "POST",
@@ -158,15 +167,78 @@ function Studio() {
         })
       });
       if (response.ok) {
-        setStatus("Success: Deployed to Fleet.");
+        await response.json();
+        if (targetDevice === "all") {
+          setStatusType('success');
+          setStatus("Artifact registered in Cloud.");
+        } else {
+          setStatusType('loading');
+          setStatus(`Deploying to ${targetDevice}...`);
+
+          try {
+            const deployRes = await fetch(`${registryUrl}/dev/deploy`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                device_id: targetDevice,
+                artifact_id: "visual-blink-1.0.0"
+              })
+            });
+
+            if (deployRes.ok) {
+              setStatusType('success');
+              setStatus(`Flash Success: ${targetDevice} updated.`);
+            } else {
+              const error = await deployRes.text();
+              setStatusType('error');
+              setStatus(`Deploy Failed: ${error}`);
+            }
+          } catch (err) {
+            setStatusType('error');
+            setStatus("Deploy Request Failed");
+          }
+        }
       } else {
         const error = await response.text();
-        setStatus(`Error: Deploy Failed: ${error}`);
+        setStatusType('error');
+        setStatus(`Build Failed: ${error}`);
       }
     } catch (e) {
-      setStatus("Error: Registry Offline");
+      setStatusType('error');
+      setStatus("Registry Connection Failed");
     } finally {
       setDeploying(false);
+      setTimeout(() => setStatus(null), 4000);
+    }
+  };
+
+  const onDownload = async () => {
+    setStatusType('loading');
+    setStatus("Preparing download...");
+    try {
+      const response = await fetch(`${registryUrl}/dev/build`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "visual-blink",
+          version: "1.0.0",
+          vdl: vdlPreview
+        })
+      });
+
+      if (response.ok) {
+        const artifact = await response.json();
+        window.open(artifact.download_url, '_blank');
+        setStatusType('success');
+        setStatus("Download Started");
+      } else {
+        setStatusType('error');
+        setStatus("Failed to generate .vex");
+      }
+    } catch (e) {
+      setStatusType('error');
+      setStatus("Registry Offline");
+    } finally {
       setTimeout(() => setStatus(null), 3000);
     }
   };
@@ -205,7 +277,8 @@ function Studio() {
   const onLoadTemplate = useCallback((newNodes: Node[], newEdges: Edge[]) => {
     setNodes(newNodes);
     setEdges(newEdges);
-    setStatus("Info: Template Loaded Successfully");
+    setStatusType('info');
+    setStatus("Template Loaded Successfully");
     setTimeout(() => setStatus(null), 2000);
   }, [setNodes, setEdges]);
 
@@ -305,7 +378,7 @@ function Studio() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="p-2 hover:bg-white/5 transition rounded-md text-slate-400 hover:text-white"
@@ -313,9 +386,28 @@ function Studio() {
           >
             <Settings size={16} />
           </button>
-          <button className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 transition rounded-md text-[10px] font-semibold text-slate-300">
-            <Download size={12} /> Export
+
+          <div className="flex items-center gap-2 bg-black/40 border border-white/5 rounded-md px-2 py-1">
+            <span className="text-[9px] font-bold text-slate-500 uppercase">Target:</span>
+            <select
+              value={targetDevice}
+              onChange={(e) => setTargetDevice(e.target.value)}
+              className="bg-transparent text-[10px] text-blue-400 outline-none cursor-pointer font-mono"
+            >
+              <option value="all">FROTA GERAL (Cloud)</option>
+              {availableDevices.map((d: any) => (
+                <option key={d.id} value={d.id}>{d.id} ({d.status})</option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={onDownload}
+            className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 transition rounded-md text-[10px] font-semibold text-slate-300 border border-white/10"
+          >
+            <Download size={12} /> .VEX
           </button>
+
           <div className="flex items-center">
             <button
               disabled={deploying}
@@ -324,7 +416,7 @@ function Studio() {
                 ${deploying ? 'bg-blue-800' : 'bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-500/20'}`}
             >
               <Zap size={12} fill="currentColor" />
-              {deploying ? 'Deploying...' : 'Deploy to Fleet'}
+              {deploying ? 'Deploying...' : targetDevice === 'all' ? 'Deploy to Fleet' : 'Instant Flash'}
             </button>
             <button className="bg-blue-600 hover:bg-blue-500 border-l border-white/10 px-1 py-1.5 rounded-r-md">
               <ChevronDown size={14} />
@@ -515,8 +607,18 @@ function Studio() {
             initial={{ y: 50, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 50, opacity: 0 }}
-            className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-2 bg-blue-600 rounded-full text-[10px] font-bold shadow-2xl border border-white/20"
+            className={`
+              absolute bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-2 rounded-full text-[10px] font-bold shadow-2xl border flex items-center gap-2
+              ${statusType === 'success' ? 'bg-emerald-600 border-emerald-400/20 text-white' :
+                statusType === 'error' ? 'bg-red-600 border-red-400/20 text-white' :
+                  statusType === 'loading' ? 'bg-blue-600 border-blue-400/20 text-white' :
+                    'bg-slate-800 border-white/10 text-slate-200'}
+            `}
           >
+            {statusType === 'loading' && <Loader2 size={12} className="animate-spin" />}
+            {statusType === 'success' && <CheckCircle2 size={12} />}
+            {statusType === 'error' && <AlertCircle size={12} />}
+            {statusType === 'info' && <Info size={12} />}
             {status}
           </motion.div>
         )}
