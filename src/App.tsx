@@ -71,13 +71,14 @@ function Studio() {
       // Handle relative paths (e.g., /api/v1)
       return `${window.location.origin}${envUrl}`;
     }
-    // Fallback to unified gateway (same host, port 80) if no env or direct access
-    return `${window.location.origin}/api/v1`;
+    // Production default: Cloud Registry
+    // For local development, set VITE_REGISTRY_URL=http://localhost:80/api/v1
+    return 'https://registry.veexplatform.com/api/v1';
   }, []);
 
   // Fetch templates from Platform
   React.useEffect(() => {
-    fetch(`${registryUrl}/api/v1/templates`)
+    fetch(`${registryUrl}/dev/templates`)
       .then(res => res.json())
       .then(data => setRemoteTemplates(data))
       .catch(() => console.warn("Registry templates offline"));
@@ -147,7 +148,7 @@ function Studio() {
     setDeploying(true);
     setStatus("Building artifact...");
     try {
-      const response = await fetch(`${registryUrl}/api/v1/build`, {
+      const response = await fetch(`${registryUrl}/dev/build`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
