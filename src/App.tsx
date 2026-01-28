@@ -193,7 +193,7 @@ function Studio() {
               setStatusType('error');
               setStatus(`Deploy Failed: ${error}`);
             }
-          } catch (err) {
+          } catch (_err) {
             setStatusType('error');
             setStatus("Deploy Request Failed");
           }
@@ -203,7 +203,7 @@ function Studio() {
         setStatusType('error');
         setStatus(`Build Failed: ${error}`);
       }
-    } catch (e) {
+    } catch (_e) {
       setStatusType('error');
       setStatus("Registry Connection Failed");
     } finally {
@@ -235,7 +235,7 @@ function Studio() {
         setStatusType('error');
         setStatus("Failed to generate .vex");
       }
-    } catch (e) {
+    } catch (_e) {
       setStatusType('error');
       setStatus("Registry Offline");
     } finally {
