@@ -376,9 +376,9 @@ function Studio() {
   }, [setNodes, setEdges]);
 
   const vdlPreview = useMemo(() => {
-    const actionNodes = nodes
-      .filter((n) => n.id !== '1' && n.type === 'action')
-      .sort((a, b) => a.position.y - b.position.y);
+    const actionNodes = (nodes || [])
+      .filter((n) => n && n.id !== '1' && n.type === 'action')
+      .sort((a, b) => (a?.position?.y || 0) - (b?.position?.y || 0));
 
     const steps = actionNodes
       .map((n) => {
@@ -488,7 +488,7 @@ function Studio() {
               className="bg-transparent text-[10px] text-blue-400 outline-none cursor-pointer font-mono"
             >
               <option value="all">FROTA GERAL (Cloud)</option>
-              {availableDevices.map((d: any) => (
+              {(availableDevices || []).map((d: any) => (
                 <option key={d.id} value={d.id}>{d.id} ({d.status})</option>
               ))}
             </select>
