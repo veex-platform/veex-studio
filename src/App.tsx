@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import {
   ReactFlow,
   addEdge,
@@ -15,7 +15,7 @@ import '@xyflow/react/dist/style.css';
 import './index.css';
 import ActionNode from './components/ActionNode';
 import Library from './components/Library';
-import { Download, Database, ListTree, Zap, ChevronDown, UserCircle, Trash2, Settings, Maximize2, Minimize2, Minus, Loader2, CheckCircle2, AlertCircle, Info } from 'lucide-react';
+import { Download, Database, ListTree, Zap, ChevronDown, UserCircle, Trash2, Settings, Maximize2, Minimize2, Minus, Loader2, CheckCircle2, AlertCircle, Info, RefreshCw, WifiOff } from 'lucide-react';
 import SettingsModal from './components/SettingsModal';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -46,6 +46,8 @@ const initialEdges: Edge[] = [
 let id = 3;
 const getId = () => `${id++}`;
 
+type ConnectionState = 'initializing' | 'checking' | 'connected' | 'offline' | 'reconnecting';
+
 function Studio() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -67,6 +69,10 @@ function Studio() {
   const [targetDevice, setTargetDevice] = useState<string>("all");
   const [statusType, setStatusType] = useState<'info' | 'success' | 'error' | 'loading'>('info');
 
+  // Connection State
+  const [connectionState, setConnectionState] = useState<ConnectionState>('initializing');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+
   // Industrial Connectivity: Dynamic Backend Discovery
   const registryUrl = useMemo(() => {
     const configUrl = projectConfig.registry?.url;
@@ -79,50 +85,70 @@ function Studio() {
     return 'https://registry.veexplatform.com/api/v1';
   }, [projectConfig.registry?.url]);
 
-  // Fetch templates and devices from Platform
-  React.useEffect(() => {
-    fetch(`${registryUrl}/dev/templates`)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch templates');
-        return res.json();
-      })
-      .then(data => {
-        if (Array.isArray(data)) {
-          setRemoteTemplates(data);
-        } else {
-          setRemoteTemplates([]);
-        }
-      })
-      .catch(() => {
-        console.warn("Registry templates offline");
-        setRemoteTemplates([]);
-      });
+  const checkHealth = useCallback(async () => {
+    setConnectionState('checking');
+    setConnectionError(null);
+    try {
+      // Use the admin health endpoint which checks DB connectivity too
+      const res = await fetch(`${registryUrl}/admin/health`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
 
-    fetch(`${registryUrl}/admin/devices`)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch devices');
-        return res.json();
-      })
-      .then(data => {
-        // API returns { devices: [], total: N }
-        if (data && Array.isArray(data.devices)) {
-          setAvailableDevices(data.devices);
-        } else if (Array.isArray(data)) {
-          // Fallback if API changes
-          setAvailableDevices(data);
-        } else {
-          setAvailableDevices([]);
-        }
-      })
-      .catch(() => {
-        console.warn("Registry devices offline");
-        setAvailableDevices([]);
-      });
+      if (data.status === 'healthy' || data.database === 'connected') {
+        setConnectionState('connected');
+      } else {
+        throw new Error('Backend unhealthy');
+      }
+    } catch (err: any) {
+      console.error("Health Check Failed:", err);
+      setConnectionState('offline');
+      setConnectionError(err.message || 'Connection refused');
+    }
   }, [registryUrl]);
 
-  // WebSocket for Real-time Events
-  React.useEffect(() => {
-    if (!registryUrl) return;
+  // Initial Health Check
+  useEffect(() => {
+    checkHealth();
+  }, [checkHealth]);
+
+  // Fetch Data (Only when connected)
+  useEffect(() => {
+    if (connectionState !== 'connected') return;
+
+    const fetchData = async () => {
+      try {
+        const [tmplRes, devRes] = await Promise.all([
+          fetch(`${registryUrl}/dev/templates`),
+          fetch(`${registryUrl}/admin/devices`)
+        ]);
+
+        if (tmplRes.ok) {
+          const tmplData = await tmplRes.json();
+          setRemoteTemplates(Array.isArray(tmplData) ? tmplData : []);
+        }
+
+        if (devRes.ok) {
+          const devData = await devRes.json();
+          // API returns { devices: [], total: N }
+          if (devData && Array.isArray(devData.devices)) {
+            setAvailableDevices(devData.devices);
+          } else if (Array.isArray(devData)) {
+            setAvailableDevices(devData);
+          } else {
+            setAvailableDevices([]);
+          }
+        }
+      } catch (err) {
+        console.warn("Data fetch failed despite healthy connection:", err);
+      }
+    };
+
+    fetchData();
+  }, [connectionState, registryUrl]);
+
+  // WebSocket for Real-time Events (Only when connected)
+  useEffect(() => {
+    if (connectionState !== 'connected') return;
 
     // Convert http(s) to ws(s)
     const wsUrl = registryUrl.replace(/^http/, 'ws') + '/ws';
@@ -167,8 +193,13 @@ function Studio() {
       };
 
       socket.onclose = () => {
-        console.log("WebSocket disconnected, reconnecting...");
-        reconnectTimer = setTimeout(connect, 3000);
+        console.log("WebSocket disconnected");
+        // Don't auto-reconnect warmly if the whole app thinks it's offline, 
+        // but if we are 'connected', we might want to try to reconnect just the socket.
+        // For now, let's keep it simple: if socket dies, we might want to re-verify health.
+        if (connectionState === 'connected') {
+          reconnectTimer = setTimeout(connect, 3000);
+        }
       };
 
       socket.onerror = (err) => {
@@ -183,7 +214,7 @@ function Studio() {
       if (socket) socket.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, [registryUrl]);
+  }, [connectionState, registryUrl]);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } }, eds)),
@@ -445,6 +476,48 @@ function Studio() {
     return { nodes: newNodes, edges: newEdges };
   };
 
+  // --------------------------------------------------------------------------
+  // RENDER: Loading / Offline / Connected
+  // --------------------------------------------------------------------------
+
+  if (connectionState === 'initializing' || connectionState === 'checking') {
+    return (
+      <div className="w-full h-full bg-[#0d0f14] flex flex-col items-center justify-center p-4">
+        <Loader2 size={32} className="text-blue-500 animate-spin mb-4" />
+        <h2 className="text-slate-200 text-sm font-bold tracking-widest uppercase">Connecting to Platform</h2>
+        <p className="text-slate-500 text-xs mt-2">Verifying Backend Services...</p>
+      </div>
+    );
+  }
+
+  if (connectionState === 'offline') {
+    return (
+      <div className="w-full h-full bg-[#0d0f14] flex flex-col items-center justify-center p-4">
+        <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-6 border border-red-500/20">
+          <WifiOff size={32} className="text-red-500" />
+        </div>
+        <h2 className="text-white text-lg font-bold">Connection Failed</h2>
+        <p className="text-slate-400 text-xs mt-2 mb-6 max-w-xs text-center leading-relaxed">
+          Could not reach the Veex Platform Registry at <br />
+          <code className="bg-white/5 px-2 py-0.5 rounded text-red-300">{registryUrl}</code>
+        </p>
+
+        {connectionError && (
+          <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-3 mb-6 max-w-sm text-center">
+            <span className="text-[10px] text-red-400 font-mono">{connectionError}</span>
+          </div>
+        )}
+
+        <button
+          onClick={checkHealth}
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg text-sm font-bold transition shadow-lg shadow-blue-500/20"
+        >
+          <RefreshCw size={16} /> Retry Connection
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full h-full bg-[#0d0f14] text-slate-100 flex flex-col overflow-hidden">
       {/* Navbar */}
@@ -460,13 +533,9 @@ function Studio() {
           </div>
           <div className="h-4 w-px bg-white/10" />
           <div className="flex items-center gap-4 text-[10px] text-slate-400 font-medium">
-            <div className="flex items-center gap-1.5 opacity-60">
-              <div className="w-1.5 h-1.5 rounded-full border border-slate-500" />
-              Industrial Edge OS
-            </div>
             <div className="flex items-center gap-1.5 text-emerald-500/80">
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]" />
-              Registry: Connected
+              Online
             </div>
           </div>
         </div>
@@ -488,7 +557,7 @@ function Studio() {
               className="bg-transparent text-[10px] text-blue-400 outline-none cursor-pointer font-mono"
             >
               <option value="all">FROTA GERAL (Cloud)</option>
-              {(availableDevices || []).map((d: any) => (
+              {Array.isArray(availableDevices) && availableDevices.map((d: any) => (
                 <option key={d.id} value={d.id}>{d.id} ({d.status})</option>
               ))}
             </select>

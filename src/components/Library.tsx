@@ -162,7 +162,7 @@ export default function Library({
                             ))}
 
                             {/* Remote Platform Templates */}
-                            {(remoteTemplates || []).map((tmpl) => (
+                            {Array.isArray(remoteTemplates) && remoteTemplates.map((tmpl) => (
                                 <button
                                     key={tmpl.id}
                                     onClick={() => {
