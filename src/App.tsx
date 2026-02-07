@@ -92,6 +92,67 @@ function Studio() {
       .catch(() => console.warn("Registry devices offline"));
   }, [registryUrl]);
 
+  // WebSocket for Real-time Events
+  React.useEffect(() => {
+    if (!registryUrl) return;
+
+    // Convert http(s) to ws(s)
+    const wsUrl = registryUrl.replace(/^http/, 'ws') + '/ws';
+    console.log("Connecting to WebSocket:", wsUrl);
+
+    let socket: WebSocket | null = null;
+    let reconnectTimer: any = null;
+
+    const connect = () => {
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        console.log("WebSocket connected");
+        setStatusType('success');
+        setStatus("Real-time Link Established");
+        setTimeout(() => setStatus(null), 3000);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'device_registered') {
+            const device = msg.payload;
+            setStatusType('info');
+            setStatus(`New Device: ${device.id}`);
+
+            // Refresh device list
+            fetch(`${registryUrl}/admin/devices`)
+              .then(res => res.json())
+              .then(data => setAvailableDevices(data))
+              .catch(console.error);
+
+            setTimeout(() => setStatus(null), 4000);
+          }
+        } catch (e) {
+          console.error("WS Parse Error", e);
+        }
+      };
+
+      socket.onclose = () => {
+        console.log("WebSocket disconnected, reconnecting...");
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+
+      socket.onerror = (err) => {
+        console.warn("WebSocket error", err);
+        socket?.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      if (socket) socket.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
+  }, [registryUrl]);
+
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } }, eds)),
     [setEdges]
