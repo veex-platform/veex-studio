@@ -82,14 +82,107 @@ function Studio() {
   // Fetch templates and devices from Platform
   React.useEffect(() => {
     fetch(`${registryUrl}/dev/templates`)
-      .then(res => res.json())
-      .then(data => setRemoteTemplates(data))
-      .catch(() => console.warn("Registry templates offline"));
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch templates');
+        return res.json();
+      })
+      .then(data => {
+        if (Array.isArray(data)) {
+          setRemoteTemplates(data);
+        } else {
+          setRemoteTemplates([]);
+        }
+      })
+      .catch(() => {
+        console.warn("Registry templates offline");
+        setRemoteTemplates([]);
+      });
 
     fetch(`${registryUrl}/admin/devices`)
-      .then(res => res.json())
-      .then(data => setAvailableDevices(data))
-      .catch(() => console.warn("Registry devices offline"));
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch devices');
+        return res.json();
+      })
+      .then(data => {
+        // API returns { devices: [], total: N }
+        if (data && Array.isArray(data.devices)) {
+          setAvailableDevices(data.devices);
+        } else if (Array.isArray(data)) {
+          // Fallback if API changes
+          setAvailableDevices(data);
+        } else {
+          setAvailableDevices([]);
+        }
+      })
+      .catch(() => {
+        console.warn("Registry devices offline");
+        setAvailableDevices([]);
+      });
+  }, [registryUrl]);
+
+  // WebSocket for Real-time Events
+  React.useEffect(() => {
+    if (!registryUrl) return;
+
+    // Convert http(s) to ws(s)
+    const wsUrl = registryUrl.replace(/^http/, 'ws') + '/ws';
+    console.log("Connecting to WebSocket:", wsUrl);
+
+    let socket: WebSocket | null = null;
+    let reconnectTimer: any = null;
+
+    const connect = () => {
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        console.log("WebSocket connected");
+        setStatusType('success');
+        setStatus("Real-time Link Established");
+        setTimeout(() => setStatus(null), 3000);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'device_registered') {
+            const device = msg.payload;
+            setStatusType('info');
+            setStatus(`New Device: ${device.id}`);
+
+            // Refresh device list
+            fetch(`${registryUrl}/admin/devices`)
+              .then(res => res.json())
+              .then(data => {
+                if (data && Array.isArray(data.devices)) {
+                  setAvailableDevices(data.devices);
+                }
+              })
+              .catch(console.error);
+
+            setTimeout(() => setStatus(null), 4000);
+          }
+        } catch (e) {
+          console.error("WS Parse Error", e);
+        }
+      };
+
+      socket.onclose = () => {
+        console.log("WebSocket disconnected, reconnecting...");
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+
+      socket.onerror = (err) => {
+        console.warn("WebSocket error", err);
+        socket?.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      if (socket) socket.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
   }, [registryUrl]);
 
   const onConnect = useCallback(
@@ -193,7 +286,7 @@ function Studio() {
               setStatusType('error');
               setStatus(`Deploy Failed: ${error}`);
             }
-          } catch (err) {
+          } catch (_err) {
             setStatusType('error');
             setStatus("Deploy Request Failed");
           }
@@ -203,7 +296,7 @@ function Studio() {
         setStatusType('error');
         setStatus(`Build Failed: ${error}`);
       }
-    } catch (e) {
+    } catch (_e) {
       setStatusType('error');
       setStatus("Registry Connection Failed");
     } finally {
@@ -235,7 +328,7 @@ function Studio() {
         setStatusType('error');
         setStatus("Failed to generate .vex");
       }
-    } catch (e) {
+    } catch (_e) {
       setStatusType('error');
       setStatus("Registry Offline");
     } finally {
