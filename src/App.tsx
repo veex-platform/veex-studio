@@ -150,8 +150,10 @@ function Studio() {
   useEffect(() => {
     if (connectionState !== 'connected') return;
 
-    // Convert http(s) to ws(s)
-    const wsUrl = registryUrl.replace(/^http/, 'ws') + '/ws';
+    // Convert http(s) to ws(s) and ensure we strip API path
+    // registryUrl usually ends in /api/v1, but WS is at root /ws
+    const baseUrl = registryUrl.replace(/\/api\/v1\/?$/, '');
+    const wsUrl = baseUrl.replace(/^http/, 'ws') + '/ws';
     console.log("Connecting to WebSocket:", wsUrl);
 
     let socket: WebSocket | null = null;
