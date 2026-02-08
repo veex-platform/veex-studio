@@ -9,7 +9,5 @@ yarn-error.log*
 .env*.local
 .vscode
 .idea
-Dockerfile
-nginx.conf
-docker-entrypoint.sh
+# Dockerfile and nginx.conf should NOT be ignored
 README.md
