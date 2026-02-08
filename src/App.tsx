@@ -1,4 +1,5 @@
-import React, { useCallback, useMemo, useState, useEffect } from 'react';
+import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import Editor, { useMonaco } from '@monaco-editor/react';
 import {
   ReactFlow,
   addEdge,
@@ -10,12 +11,15 @@ import {
   type Node,
   ReactFlowProvider,
   BackgroundVariant,
+  Controls,
+  MiniMap,
+  Panel,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './index.css';
 import ActionNode from './components/ActionNode';
 import Library from './components/Library';
-import { Download, Database, ListTree, Zap, ChevronDown, UserCircle, Trash2, Settings, Maximize2, Minimize2, Minus, Loader2, CheckCircle2, AlertCircle, Info, RefreshCw, WifiOff } from 'lucide-react';
+import { Download, Database, ListTree, Zap, ChevronDown, UserCircle, Trash2, Settings, Minimize2, Loader2, CheckCircle2, AlertCircle, Info, RefreshCw, WifiOff, Play, Terminal, Columns, Rows, ArrowLeftRight, Monitor } from 'lucide-react';
 import SettingsModal from './components/SettingsModal';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -57,7 +61,9 @@ function Studio() {
   const [deploying, setDeploying] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [vdlMode, setVdlMode] = useState<'min' | 'normal' | 'max'>('normal');
+  const [viewMode, setViewMode] = useState<'split' | 'visual' | 'code'>('split');
+  const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('vertical');
+  const [isVdlFirst, setIsVdlFirst] = useState(false);
   const [projectConfig, setProjectConfig] = useState({
     target: 'esp32',
     wifi: { ssid: 'Factory_Guest', password: 'secure_iot_pass' },
@@ -68,6 +74,12 @@ function Studio() {
   // const [availableDevices, setAvailableDevices] = useState<any[]>([]); // Removed
   const [targetDevice] = useState<string>("all"); // Default to cloud/all
   const [statusType, setStatusType] = useState<'info' | 'success' | 'error' | 'loading'>('info');
+  const [simulating, setSimulating] = useState(false);
+  const [simulationLogs, setSimulationLogs] = useState<any[]>([]);
+  const [showConsole, setShowConsole] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<any[]>([]);
+  const editorRef = useRef<any>(null);
+  const monaco = useMonaco();
 
   // Connection State
   const [connectionState, setConnectionState] = useState<ConnectionState>('initializing');
@@ -353,6 +365,44 @@ function Studio() {
     }
   };
 
+  const onSimulate = async () => {
+    setSimulating(true);
+    setShowConsole(true);
+    setSimulationLogs([]);
+    setStatusType('loading');
+    setStatus("Starting Simulation...");
+
+    try {
+      const response = await fetch(`${registryUrl}/dev/simulate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vdl: vdlPreview,
+          payload: { "simulated": true }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSimulationLogs(data.logs || []);
+        setStatusType('success');
+        setStatus("Simulation Finished");
+      } else {
+        const err = await response.text();
+        setSimulationLogs([{ timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Failed: ${err}` }]);
+        setStatusType('error');
+        setStatus("Simulation Failed");
+      }
+    } catch (e: any) {
+      setSimulationLogs([{ timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Connection Error: ${e.message}` }]);
+      setStatusType('error');
+      setStatus("Simulation Error");
+    } finally {
+      setSimulating(false);
+      setTimeout(() => setStatus(null), 3000);
+    }
+  };
+
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
@@ -406,6 +456,46 @@ function Studio() {
 
     return `vdlVersion: "1.0"\nenvironment:\n  target: "${projectConfig.target}"\n  wifi:\n    ssid: "${projectConfig.wifi.ssid}"\n    password: "${projectConfig.wifi.password}"\n  mqtt:\n    broker: "${projectConfig.mqtt.broker}"\nflows:\n  main_loop:\n    steps:\n${steps}`;
   }, [nodes, projectConfig]);
+
+  // Real-time Validation Effect
+  useEffect(() => {
+    if (!vdlPreview || connectionState !== 'connected') return;
+
+    const validate = async () => {
+      try {
+        const res = await fetch(`${registryUrl}/dev/validate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vdl: vdlPreview })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setValidationErrors(data.errors || []);
+
+          // Update Monaco Markers
+          if (monaco && editorRef.current) {
+            const model = editorRef.current.getModel();
+            if (model) {
+              const markers = (data.errors || []).map((err: any) => ({
+                startLineNumber: err.line || 1,
+                startColumn: 1,
+                endLineNumber: err.line || 1,
+                endColumn: 1000,
+                message: err.message,
+                severity: err.level === 'error' ? 8 : 4, // 8=Error, 4=Warning
+              }));
+              monaco.editor.setModelMarkers(model, 'owner', markers);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Validation failed", e);
+      }
+    };
+
+    const timer = setTimeout(validate, 800);
+    return () => clearTimeout(timer);
+  }, [vdlPreview, connectionState, registryUrl, monaco]);
 
   const parseVDL = (vdlStr: string): { nodes: Node[], edges: Edge[] } => {
     const newNodes: Node[] = [
@@ -461,6 +551,17 @@ function Studio() {
 
     return { nodes: newNodes, edges: newEdges };
   };
+
+  // Auto-centering when layout changes
+  useEffect(() => {
+    if (reactFlowInstance && (viewMode === 'split' || viewMode === 'visual')) {
+      // Delay slightly to allow the DOM to resize
+      const timer = setTimeout(() => {
+        reactFlowInstance.fitView({ duration: 600, padding: 0.2 });
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+  }, [viewMode, orientation, isVdlFirst, reactFlowInstance]);
 
   // --------------------------------------------------------------------------
   // RENDER: Loading / Offline / Connected
@@ -559,6 +660,15 @@ function Studio() {
             <Download size={12} /> .VEX
           </button>
 
+          <button
+            onClick={onSimulate}
+            disabled={simulating}
+            className={`flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 transition rounded-md text-[10px] font-semibold text-green-400 border border-green-500/20 mr-2 ${simulating ? 'opacity-50' : ''}`}
+          >
+            <Play size={12} fill="currentColor" />
+            {simulating ? 'Running...' : 'Run'}
+          </button>
+
           <div className="flex items-center">
             <button
               disabled={deploying}
@@ -587,40 +697,172 @@ function Studio() {
           parseVDL={parseVDL}
         />
 
-        {/* Center: Canvas */}
-        <main className="flex-1 relative bg-[#0b0e14] border-r border-white/5" onDragOver={onDragOver} onDrop={onDrop}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            isValidConnection={isValidConnection}
-            onInit={setReactFlowInstance}
-            onNodeClick={onNodeClick}
-            onEdgeClick={onEdgeClick}
-            onPaneClick={onPaneClick}
-            fitView
-          >
-            <Background variant={BackgroundVariant.Dots} color="#1e293b" gap={20} size={1} />
+        {/* Center: Split View (XAML Designer Style) */}
+        <main className="flex-1 relative bg-[#0b0e14] flex flex-col overflow-hidden">
+          <div className={`flex-1 flex overflow-hidden ${orientation === 'vertical' ? 'flex-row' : 'flex-col'} ${isVdlFirst ? (orientation === 'vertical' ? 'flex-row-reverse' : 'flex-col-reverse') : ''}`}>
 
-            {nodes.length === 1 && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
-                <div className="flex flex-col items-center gap-3">
-                  <div className="w-12 h-12 rounded-full border-2 border-dashed border-slate-500 flex items-center justify-center text-xl">+</div>
-                  <span className="text-xs font-medium tracking-widest uppercase">Start by dragging capabilities here</span>
-                </div>
+            {/* Visual View (Graph) */}
+            {(viewMode === 'split' || viewMode === 'visual') && (
+              <div className="relative flex-1 bg-[#0b0e14] transition-all duration-300 overflow-hidden" onDragOver={onDragOver} onDrop={onDrop}>
+                <ReactFlow
+                  nodes={nodes}
+                  edges={edges}
+                  nodeTypes={nodeTypes}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={onConnect}
+                  isValidConnection={isValidConnection}
+                  onInit={setReactFlowInstance}
+                  onNodeClick={onNodeClick}
+                  onEdgeClick={onEdgeClick}
+                  onPaneClick={onPaneClick}
+                  fitView
+                >
+                  <Background variant={BackgroundVariant.Dots} color="#1e293b" gap={20} size={1} />
+
+                  <Controls
+                    className="!bg-[#131722] !border-white/10 !fill-white shadow-xl"
+                    showInteractive={false}
+                  />
+                  <MiniMap
+                    style={{ backgroundColor: '#0d0f14' }}
+                    nodeColor="#1e293b"
+                    maskColor="rgba(0, 0, 0, 0.4)"
+                    className="border border-white/5 rounded-lg overflow-hidden !m-4"
+                  />
+                  <Panel position="top-right" className="bg-[#131722]/80 backdrop-blur-md border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-2 m-4 shadow-2xl">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                      {viewMode === 'split' ? 'Multi-Window View' : 'Visual Focused'}
+                    </span>
+                  </Panel>
+
+                  {nodes.length === 1 && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-12 h-12 rounded-full border-2 border-dashed border-slate-500 flex items-center justify-center text-xl">+</div>
+                        <span className="text-xs font-medium tracking-widest uppercase text-[9px]">Start by dragging capabilities</span>
+                      </div>
+                    </div>
+                  )}
+                </ReactFlow>
               </div>
             )}
-          </ReactFlow>
+
+            {/* Splitter Line */}
+            {viewMode === 'split' && (
+              <div className={`bg-white/5 ${orientation === 'vertical' ? 'w-px h-full' : 'h-px w-full'}`} />
+            )}
+
+            {/* Code View (VDL Editor) */}
+            {(viewMode === 'split' || viewMode === 'code') && (
+              <div className="relative flex-1 flex flex-col bg-[#0b0e14] transition-all duration-300 overflow-hidden">
+                {/* Editor Area */}
+                <div className="flex-1 overflow-hidden">
+                  <Editor
+                    height="100%"
+                    defaultLanguage="yaml"
+                    theme="vs-dark"
+                    value={vdlPreview}
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 11,
+                      lineNumbers: 'on',
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      fontFamily: 'JetBrains Mono, monospace',
+                      padding: { top: 12, bottom: 12 },
+                    }}
+                    onMount={(editor) => {
+                      editorRef.current = editor;
+                    }}
+                  />
+                </div>
+
+                {/* Validation Errors Overlay */}
+                {validationErrors.length > 0 && (
+                  <div className="bg-red-950/40 border-t border-red-500/20 p-2 max-h-[100px] overflow-y-auto shrink-0">
+                    {validationErrors.map((err, i) => (
+                      <div key={i} className="text-[9px] text-red-300 font-mono flex items-start gap-2 mb-1 last:mb-0">
+                        <AlertCircle size={8} className="mt-0.5 shrink-0" />
+                        <span>Line {err.line}: {err.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* XAML-style Layout Control Toolbar */}
+          <div className="h-9 bg-[#131722] border-t border-white/5 flex items-center justify-between px-3 shrink-0 z-50 relative">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1 bg-white/5 rounded p-0.5 border border-white/5">
+                <button
+                  onClick={() => setViewMode('visual')}
+                  className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition ${viewMode === 'visual' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                  title="Visual Only"
+                >
+                  Visual
+                </button>
+                <button
+                  onClick={() => setViewMode('split')}
+                  className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition ${viewMode === 'split' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                  title="Split View"
+                >
+                  Split
+                </button>
+                <button
+                  onClick={() => setViewMode('code')}
+                  className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition ${viewMode === 'code' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                  title="Code Only"
+                >
+                  Code
+                </button>
+              </div>
+
+              <div className="h-4 w-px bg-white/10" />
+
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setOrientation('vertical')}
+                  className={`p-1.5 rounded transition ${orientation === 'vertical' ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+                  title="Vertical Split (Side-by-side)"
+                >
+                  <Columns size={12} />
+                </button>
+                <button
+                  onClick={() => setOrientation('horizontal')}
+                  className={`p-1.5 rounded transition ${orientation === 'horizontal' ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+                  title="Horizontal Split (Stacked)"
+                >
+                  <Rows size={12} />
+                </button>
+                <div className="w-1" />
+                <button
+                  onClick={() => setIsVdlFirst(!isVdlFirst)}
+                  className="p-1.5 rounded text-slate-500 hover:text-blue-400 hover:bg-white/5 transition"
+                  title="Swap Positions"
+                >
+                  <ArrowLeftRight size={12} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 text-[9px] font-bold text-slate-500 uppercase tracking-widest">
+              <span className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                Live Sync Active
+              </span>
+            </div>
+          </div>
         </main>
 
         {/* Right: Properties & VDL */}
         <aside className="w-[300px] shrink-0 bg-[#131722]/50 backdrop-blur-3xl flex flex-col min-h-0 border-l border-white/5 transition-all duration-300">
 
-          {/* Properties Panel (Hidden when VDL is Maximized) */}
-          <div className={`flex flex-col min-h-0 transition-all duration-300 ${vdlMode === 'max' ? 'h-0 opacity-0 overflow-hidden' : 'flex-1 opacity-100'}`}>
+          {/* Properties Panel (Hidden when View is Code-only) */}
+          <div className={`flex flex-col min-h-0 transition-all duration-300 ${viewMode === 'code' ? 'h-0 opacity-0 overflow-hidden' : 'flex-1 opacity-100'}`}>
             {selectedNode || selectedEdge ? (
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="p-4 border-b border-white/5 flex items-center justify-between">
@@ -628,6 +870,14 @@ function Studio() {
                     {selectedNode ? 'Properties' : 'Connection'}
                   </h2>
                   <div className="flex items-center gap-2">
+                    {viewMode !== 'split' && (
+                      <button
+                        onClick={() => setViewMode('split')}
+                        className="text-[9px] font-bold text-blue-500 hover:text-blue-400 transition flex items-center gap-1 bg-blue-500/5 px-2 py-1 rounded"
+                      >
+                        <Zap size={10} /> SPLIT VIEW
+                      </button>
+                    )}
                     <button
                       onClick={deleteSelection}
                       className="text-slate-600 hover:text-red-500 transition p-1 rounded-md hover:bg-white/5"
@@ -635,7 +885,6 @@ function Studio() {
                     >
                       <Trash2 size={12} />
                     </button>
-                    <Zap size={10} className="text-blue-500" />
                   </div>
                 </div>
 
@@ -696,61 +945,67 @@ function Studio() {
             )}
           </div>
 
-          {/* Live VDL Preview with Window Controls */}
-          <div className={`bg-[#0b0e14] border-t border-white/5 flex flex-col transition-all duration-300 ease-in-out
-             ${vdlMode === 'max' ? 'flex-1' : vdlMode === 'min' ? 'h-[40px] shrink-0' : 'h-1/3 shrink-0'}`}>
-
-            {/* VDL Header */}
-            <div
-              className="h-[40px] px-3 border-b border-white/5 flex items-center justify-between shrink-0 bg-white/5 cursor-pointer hover:bg-white/10 transition"
-              onClick={() => setVdlMode(prev => prev === 'min' ? 'normal' : 'min')} // Click header to toggle min/normal
-            >
-              <div className="flex items-center gap-2">
-                <h2 className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                  <div className={`w-1.5 h-1.5 rounded-full ${vdlMode === 'min' ? 'bg-slate-500' : 'bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.5)]'}`} />
-                  Live VDL Preview
-                </h2>
-                {vdlMode === 'min' && <span className="text-[9px] text-slate-600 font-mono hidden group-hover:block ml-2">Click to Expand</span>}
-              </div>
-
-              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                {/* Minimize Button */}
-                <button
-                  onClick={() => setVdlMode('min')}
-                  className={`p-1 rounded hover:bg-white/10 text-slate-500 hover:text-white transition ${vdlMode === 'min' ? 'text-blue-400' : ''}`}
-                  title="Minimize"
-                >
-                  <Minus size={12} />
-                </button>
-
-                {/* Normal / Restore Button */}
-                <button
-                  onClick={() => setVdlMode('normal')}
-                  className={`p-1 rounded hover:bg-white/10 text-slate-500 hover:text-white transition ${vdlMode === 'normal' ? 'text-blue-400' : ''}`}
-                  title="Normal View"
-                >
-                  <Minimize2 size={12} />
-                </button>
-
-                {/* Maximize Button */}
-                <button
-                  onClick={() => setVdlMode('max')}
-                  className={`p-1 rounded hover:bg-white/10 text-slate-500 hover:text-white transition ${vdlMode === 'max' ? 'text-blue-400' : ''}`}
-                  title="Maximize"
-                >
-                  <Maximize2 size={12} />
-                </button>
-              </div>
+          {!selectedNode && !selectedEdge && viewMode !== 'split' && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <button
+                onClick={() => setViewMode('split')}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-[10px] font-bold tracking-widest transition flex items-center gap-2 shadow-xl shadow-blue-500/20"
+              >
+                <Monitor size={12} fill="currentColor" /> ENABLE SPLIT VIEW
+              </button>
             </div>
-
-            {/* VDL Content (Scrollable) */}
-            <div className={`flex-1 p-4 font-mono text-[10px] overflow-auto text-blue-100/40 leading-relaxed scrollbar-hide
-               ${vdlMode === 'min' ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-              <pre>{vdlPreview}</pre>
-            </div>
-          </div>
+          )}
         </aside>
-      </div>
+      </div >
+
+      <AnimatePresence>
+        {showConsole && (
+          <motion.div
+            initial={{ y: 200 }}
+            animate={{ y: 0 }}
+            exit={{ y: 200 }}
+            className="absolute bottom-0 left-0 right-[300px] h-[200px] bg-[#0b0e14] border-t border-white/5 z-40 flex flex-col shadow-2xl"
+          >
+            <div className="h-8 bg-white/5 flex items-center justify-between px-4 border-b border-white/5">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <Terminal size={12} className="text-green-500" />
+                Simulation Console
+              </div>
+              <button
+                onClick={() => setShowConsole(false)}
+                className="p-1 hover:text-white text-slate-500"
+              >
+                <Minimize2 size={12} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 font-mono text-[11px] space-y-1">
+              {simulationLogs.length === 0 ? (
+                <span className="text-slate-600 block italic">Waiting for execution...</span>
+              ) : (
+                simulationLogs.map((log, i) => (
+                  <div key={i} className="flex items-start gap-3 border-b border-white/5 pb-1 mb-1 last:border-0">
+                    <span className="text-slate-500 shrink-0">{log.timestamp}</span>
+                    <span className={`font-bold uppercase tracking-wider w-16 shrink-0 
+                      ${log.level === 'error' ? 'text-red-500' :
+                        log.level === 'warn' ? 'text-yellow-500' :
+                          log.level === 'success' ? 'text-green-500' : 'text-blue-400'}`}>
+                      [{log.level}]
+                    </span>
+                    <span className="text-slate-300">{log.message}</span>
+                    {log.step_id && <span className="ml-auto text-slate-600 text-[9px] bg-white/5 px-2 rounded">{log.step_id}</span>}
+                  </div>
+                ))
+              )}
+              {simulating && (
+                <div className="flex items-center gap-2 mt-2">
+                  <Loader2 size={12} className="animate-spin text-blue-500" />
+                  <span className="text-blue-500">Executing steps...</span>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {status && (
@@ -781,7 +1036,7 @@ function Studio() {
         config={projectConfig}
         onSave={setProjectConfig}
       />
-    </div>
+    </div >
   );
 }
 

@@ -1,7 +1,7 @@
 import {
     Cpu, Clock, Database, Send, Network,
-    Activity,
-    MessageSquare, Globe, Search, ChevronDown
+    Activity, Thermometer, Droplets,
+    MessageSquare, Globe, Search, ChevronDown, Bluetooth, Zap
 } from 'lucide-react';
 import React, { useState } from 'react';
 
@@ -50,6 +50,36 @@ const templates = [
             { id: 'e1-2', source: '1', target: '2', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
             { id: 'e2-3', source: '2', target: '3', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
         ]
+    },
+    {
+        id: 'tmpl-modbus',
+        title: 'Modbus Temp Monitor',
+        description: 'Read PLC registers and alert on high temp.',
+        icon: <Cpu size={14} />,
+        nodes: [
+            { id: '1', type: 'input', data: { label: 'Boot Sequence' }, position: { x: 250, y: 0 } },
+            { id: '2', type: 'action', data: { label: 'Read PLC', action: 'read_holding_registers', type: 'modbus', params: { address: '4001', count: '1', server: '192.168.1.50' } }, position: { x: 250, y: 100 } },
+            { id: '3', type: 'action', data: { label: 'Alert Logic', action: 'compare', type: 'logic', params: { operator: '>', threshold: '45.0' } }, position: { x: 250, y: 200 } },
+        ],
+        edges: [
+            { id: 'e1-2', source: '1', target: '2', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
+            { id: 'e2-3', source: '2', target: '3', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
+        ]
+    },
+    {
+        id: 'tmpl-edge-ai',
+        title: 'Edge AI Vibration',
+        description: 'Detect motor anomalies with TinyML.',
+        icon: <Activity size={14} />,
+        nodes: [
+            { id: '1', type: 'input', data: { label: 'Boot Sequence' }, position: { x: 250, y: 0 } },
+            { id: '2', type: 'action', data: { label: 'Read Accel', action: 'read', type: 'sensor.accelerometer', params: { axis: 'z', hz: '100' } }, position: { x: 250, y: 100 } },
+            { id: '3', type: 'action', data: { label: 'Inference', action: 'inference', type: 'ml', params: { model: 'vibration_v1.tflite' } }, position: { x: 250, y: 200 } },
+        ],
+        edges: [
+            { id: 'e1-2', source: '1', target: '2', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
+            { id: 'e2-3', source: '2', target: '3', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
+        ]
     }
 ];
 
@@ -69,6 +99,14 @@ const categories = [
             { type: 'action', label: 'GPIO Write', capability: 'platform.gpio', icon: <Cpu size={14} />, params: { pin: '2', level: '1' }, action: 'write' },
             { type: 'action', label: 'I2C Read', capability: 'platform.i2c', icon: <Database size={14} />, params: { address: '0x68', register: '0x3B' }, action: 'read' },
             { type: 'action', label: 'SPI Transfer', capability: 'platform.spi', icon: <Database size={14} />, params: { cs: '15', data: "0x00" }, action: 'transfer' },
+            { type: 'action', label: 'Modbus Read', capability: 'modbus', icon: <Cpu size={14} />, params: { address: '4001', count: '1' }, action: 'read' },
+        ]
+    },
+    {
+        id: 'edge_ai',
+        title: 'Edge AI & Analytics',
+        items: [
+            { type: 'action', label: 'ML Inference', capability: 'ml', icon: <Zap size={14} />, params: { model: 'vibration_v1.tflite' }, action: 'inference' },
         ]
     },
     {
@@ -86,6 +124,19 @@ const categories = [
         items: [
             { type: 'action', label: 'HTTP Post', capability: 'comm.http', icon: <Globe size={14} />, params: { url: 'https://api.veex.io' }, action: 'post' },
             { type: 'action', label: 'gRPC Call', capability: 'comm.grpc', icon: <Globe size={14} />, params: { service: 'Controller' }, action: 'call' },
+            { type: 'action', label: 'BLE Advertise', capability: 'comm.ble', icon: <Bluetooth size={14} />, params: { name: 'VEEX-NODE' }, action: 'advertise' },
+        ]
+    }, // Line 130
+    {
+        id: 'sensors',
+        title: 'Sensors & Actuators',
+        items: [
+            { type: 'action', label: 'Temp (Generic)', capability: 'platform.sensor', icon: <Thermometer size={14} />, params: { type: 'temperature' }, action: 'read' },
+            { type: 'action', label: 'Humidity (Generic)', capability: 'platform.sensor', icon: <Droplets size={14} />, params: { type: 'humidity' }, action: 'read' },
+            { type: 'action', label: 'Pressure (Generic)', capability: 'platform.sensor', icon: <Activity size={14} />, params: { type: 'pressure' }, action: 'read' },
+            { type: 'action', label: 'BME280 Driver', capability: 'sensor.bme280', icon: <Cpu size={14} />, params: { addr: '0x76' }, action: 'read' },
+            { type: 'action', label: 'AHT20 Driver', capability: 'sensor.aht20', icon: <Cpu size={14} />, params: { addr: '0x38' }, action: 'read' },
+            { type: 'action', label: 'Accelerometer', capability: 'sensor.accelerometer', icon: <Activity size={14} />, params: { axis: 'xyz' }, action: 'read' },
         ]
     }
 ];
@@ -100,6 +151,19 @@ export default function Library({
     parseVDL: (vdl: string) => { nodes: any[], edges: any[] }
 }) {
     const [openCats, setOpenCats] = useState<string[]>(['templates', ...categories.map(c => c.id)]);
+
+    // Group remote templates by category
+    const groupedRemoteTemplates = React.useMemo(() => {
+        const groups: Record<string, any[]> = {};
+        if (Array.isArray(remoteTemplates)) {
+            remoteTemplates.forEach(tmpl => {
+                const cat = tmpl.category || 'other';
+                if (!groups[cat]) groups[cat] = [];
+                groups[cat].push(tmpl);
+            });
+        }
+        return groups;
+    }, [remoteTemplates]);
 
     const onDragStart = (event: React.DragEvent, nodeData: any) => {
         event.dataTransfer.setData('application/reactflow', JSON.stringify(nodeData));
@@ -161,26 +225,35 @@ export default function Library({
                                 </button>
                             ))}
 
-                            {/* Remote Platform Templates */}
-                            {Array.isArray(remoteTemplates) && remoteTemplates.map((tmpl) => (
-                                <button
-                                    key={tmpl.id}
-                                    onClick={() => {
-                                        const { nodes, edges } = parseVDL(tmpl.vdl);
-                                        onLoadTemplate(nodes, edges);
-                                    }}
-                                    className="w-full text-left p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 hover:border-blue-400 hover:bg-blue-600/20 transition-all group"
-                                >
-                                    <div className="flex items-center gap-3 mb-1">
-                                        <div className="text-emerald-500 group-hover:scale-110 transition-transform">
-                                            <Globe size={14} />
-                                        </div>
-                                        <span className="text-[11px] font-bold text-slate-100">{tmpl.title}</span>
+                            {/* Remote Platform Templates (Grouped) */}
+                            {Object.entries(groupedRemoteTemplates).map(([category, tmpls]) => (
+                                <div key={category} className="mt-4">
+                                    <h3 className="px-2 text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-2 border-b border-white/5 pb-1">
+                                        {category}
+                                    </h3>
+                                    <div className="space-y-2">
+                                        {tmpls.map((tmpl) => (
+                                            <button
+                                                key={tmpl.id}
+                                                onClick={() => {
+                                                    const { nodes, edges } = parseVDL(tmpl.vdl);
+                                                    onLoadTemplate(nodes, edges);
+                                                }}
+                                                className="w-full text-left p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 hover:border-blue-400 hover:bg-blue-600/20 transition-all group"
+                                            >
+                                                <div className="flex items-center gap-3 mb-1">
+                                                    <div className="text-emerald-500 group-hover:scale-110 transition-transform">
+                                                        <Globe size={14} />
+                                                    </div>
+                                                    <span className="text-[11px] font-bold text-slate-100">{tmpl.title}</span>
+                                                </div>
+                                                <p className="text-[9px] text-slate-400 leading-tight">
+                                                    {tmpl.description}
+                                                </p>
+                                            </button>
+                                        ))}
                                     </div>
-                                    <p className="text-[9px] text-slate-400 leading-tight">
-                                        {tmpl.description} (Remote)
-                                    </p>
-                                </button>
+                                </div>
                             ))}
                         </div>
                     )}
