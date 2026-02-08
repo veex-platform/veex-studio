@@ -11,10 +11,17 @@ import {
 const initialNodes: Node[] = [
     {
         id: '1',
-        type: 'input',
-        data: { label: 'Boot Sequence' },
+        type: 'trigger',
+        data: {
+            label: 'Boot Sequence',
+            action: 'boot',
+            params: {
+                priority: 'high',
+                timeout: '30s',
+                retry: '3'
+            }
+        },
         position: { x: 300, y: 50 },
-        className: 'bg-white !text-slate-900 border-none rounded-lg px-6 py-3 font-bold shadow-xl !w-[160px] text-center text-[10px]',
     },
     {
         id: '2',
@@ -145,7 +152,7 @@ export const useStudioState = () => {
 
             const newNode: Node = {
                 id: getId(),
-                type: 'action',
+                type: nodeData.type || 'action',
                 position,
                 data: {
                     label: nodeData.label,
@@ -158,6 +165,11 @@ export const useStudioState = () => {
         },
         [reactFlowInstance, setNodes, snippets, setEdges]
     );
+
+    const onDragOver = useCallback((event: React.DragEvent) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+    }, []);
 
     const onLoadTemplate = useCallback((newNodes: Node[], newEdges: Edge[]) => {
         setNodes(newNodes);
@@ -218,6 +230,7 @@ export const useStudioState = () => {
         onPaneClick,
         updateNodeData,
         deleteSelection,
+        onDragOver,
         onDrop,
         onLoadTemplate,
         activeNodes,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Zap, Trash2, ListTree } from 'lucide-react';
+import { Zap, Trash2, ListTree, ChevronDown } from 'lucide-react';
 import { type Node, type Edge } from '@xyflow/react';
 
 interface SidebarProps {
@@ -67,22 +67,93 @@ const Sidebar: React.FC<SidebarProps> = ({
                                     </div>
                                 </div>
 
+                                <div>
+                                    <label className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block mb-1.5">Action</label>
+                                    <div className="relative">
+                                        <select
+                                            value={(selectedNode.data.action as string) || ''}
+                                            onChange={(e) => updateNodeData(selectedNode.id, { action: e.target.value })}
+                                            className="w-full bg-black/40 border border-white/10 rounded-lg py-1.5 px-3 pr-8 text-[11px] text-emerald-400 font-mono outline-none focus:border-emerald-500/50 appearance-none cursor-pointer hover:bg-black/60 transition-colors"
+                                        >
+                                            <option value="">(Custom Action...)</option>
+                                            {/* Dynamic options based on capability */}
+                                            {(selectedNode.data.type as string)?.includes('gpio') && (
+                                                <>
+                                                    <option value="read">read</option>
+                                                    <option value="write">write</option>
+                                                    <option value="readwrite">readwrite</option>
+                                                </>
+                                            )}
+                                            {(selectedNode.data.type as string)?.includes('mqtt') && (
+                                                <>
+                                                    <option value="publish">publish</option>
+                                                    <option value="subscribe">subscribe</option>
+                                                </>
+                                            )}
+                                            {(selectedNode.data.type as string)?.includes('i2c') && (
+                                                <>
+                                                    <option value="read">read</option>
+                                                    <option value="write">write</option>
+                                                </>
+                                            )}
+                                            {(selectedNode.data.type as string)?.includes('can') && (
+                                                <>
+                                                    <option value="send">send</option>
+                                                    <option value="receive">receive</option>
+                                                </>
+                                            )}
+                                            {/* Logic specific options */}
+                                            {(selectedNode.data.type as string)?.includes('logic') && (
+                                                <>
+                                                    <option value="set">set</option>
+                                                    <option value="get">get</option>
+                                                    <option value="increment">increment</option>
+                                                    <option value="decrement">decrement</option>
+                                                </>
+                                            )}
+
+                                            {/* Default fallback options only if NO specific capability options matched */}
+                                            {!['gpio', 'mqtt', 'i2c', 'can', 'logic'].some(cap => (selectedNode.data.type as string)?.includes(cap)) && (
+                                                <>
+                                                    <option value="read">read</option>
+                                                    <option value="write">write</option>
+                                                    <option value="boot">boot</option>
+                                                </>
+                                            )}
+
+                                            {/* Always show boot as an option for core/triggers if not already matched */}
+                                            {(selectedNode.data.type as string) === 'platform.core' && <option value="boot">boot</option>}
+
+                                            {/* Fallback for current value if custom */}
+                                            {!!selectedNode.data.action && !['read', 'write', 'readwrite', 'publish', 'subscribe', 'send', 'receive', 'set', 'get', 'increment', 'decrement', 'boot'].includes(selectedNode.data.action as string) && (
+                                                <option value={selectedNode.data.action as string}>{selectedNode.data.action as string}</option>
+                                            )}
+                                        </select>
+                                        <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                                            <ChevronDown size={10} />
+                                        </div>
+                                    </div>
+                                    <p className="text-[8px] text-slate-600 mt-1 italic leading-tight">Primary operation for this capability</p>
+                                </div>
+
                                 <div className="space-y-4">
                                     <label className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Configuration</label>
-                                    {Object.entries(selectedNode.data.params || {}).map(([key, value]) => (
-                                        <div key={key} className="flex flex-col gap-1.5">
-                                            <span className="text-[10px] text-slate-400 px-1">{key}</span>
-                                            <input
-                                                type="text"
-                                                value={(value as string) || ''}
-                                                onChange={(e) => {
-                                                    const oldParams = (selectedNode.data.params as Record<string, any>) || {};
-                                                    updateNodeData(selectedNode.id, { params: { ...oldParams, [key]: e.target.value } });
-                                                }}
-                                                className="w-full bg-black/40 border border-white/10 rounded-lg py-1.5 px-3 text-[11px] text-blue-300 outline-none focus:border-blue-500/50"
-                                            />
-                                        </div>
-                                    ))}
+                                    {Object.entries(selectedNode.data.params || {})
+                                        .filter(([key]) => key !== 'action') // Filter out action as it has its own field now
+                                        .map(([key, value]) => (
+                                            <div key={key} className="flex flex-col gap-1.5">
+                                                <span className="text-[10px] text-slate-400 px-1">{key}</span>
+                                                <input
+                                                    type="text"
+                                                    value={(value as string) || ''}
+                                                    onChange={(e) => {
+                                                        const oldParams = (selectedNode.data.params as Record<string, any>) || {};
+                                                        updateNodeData(selectedNode.id, { params: { ...oldParams, [key]: e.target.value } });
+                                                    }}
+                                                    className="w-full bg-black/40 border border-white/10 rounded-lg py-1.5 px-3 text-[11px] text-blue-300 outline-none focus:border-blue-500/50"
+                                                />
+                                            </div>
+                                        ))}
                                 </div>
                             </div>
                         ) : (
@@ -104,20 +175,6 @@ const Sidebar: React.FC<SidebarProps> = ({
                     </div>
                 )}
             </div>
-
-            {!selectedNode && !selectedEdge && viewMode !== 'split' && (
-                <div className="absolute inset-0 flex items-center justify-center">
-                    <button
-                        onClick={() => onSetViewMode('split')}
-                        className="group flex flex-col items-center gap-3 transition-transform hover:scale-105"
-                    >
-                        <div className="w-12 h-12 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 group-hover:bg-blue-600/20 transition">
-                            <Zap size={20} />
-                        </div>
-                        <span className="text-[10px] font-bold text-blue-500/50 uppercase tracking-[0.2em] group-hover:text-blue-400 transition">Enable Split View</span>
-                    </button>
-                </div>
-            )}
         </aside>
     );
 };

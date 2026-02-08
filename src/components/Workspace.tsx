@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import Console from './Console';
 import type { TelemetryMessage } from '../types';
@@ -13,7 +13,7 @@ import {
     type Edge,
     type Connection,
 } from '@xyflow/react';
-import { Columns, Rows, ArrowLeftRight, AlertCircle, Scissors } from 'lucide-react';
+import { Columns, Rows, ArrowLeftRight, AlertCircle, Scissors, PanelLeftClose } from 'lucide-react';
 
 
 interface WorkspaceProps {
@@ -44,6 +44,9 @@ interface WorkspaceProps {
     logs: TelemetryMessage[];
     onClearLogs: () => void;
     onSaveSnippet: (name: string) => void;
+    isConsoleCollapsed: boolean;
+    setIsConsoleCollapsed: (collapsed: boolean) => void;
+    deleteSelection: () => void;
 }
 
 const Workspace: React.FC<WorkspaceProps> = ({
@@ -74,16 +77,23 @@ const Workspace: React.FC<WorkspaceProps> = ({
     logs,
     onClearLogs,
     onSaveSnippet,
+    isConsoleCollapsed,
+    setIsConsoleCollapsed,
+    deleteSelection,
 }) => {
     const selectedNodes = nodes.filter(n => n.selected);
     const hasSelection = selectedNodes.length > 0;
 
-    // Inject active state into nodes
+    const [liveViewMode, setLiveViewMode] = useState(false);
+
+    // Inject active state and telemetry into nodes
     const nodesWithActive = nodes.map(node => ({
         ...node,
         data: {
             ...node.data,
-            isActive: activeNodes[node.id] || false
+            isActive: activeNodes[node.id] || false,
+            telemetry: logs,
+            isLiveView: liveViewMode
         }
     }));
     // Auto-centering when layout changes
@@ -95,6 +105,32 @@ const Workspace: React.FC<WorkspaceProps> = ({
             return () => clearTimeout(timer);
         }
     }, [viewMode, orientation, isVdlFirst, reactFlowInstance]);
+
+    // Keyboard shortcut for deleting selected nodes/edges
+    useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            // Check if Delete or Backspace is pressed
+            if (event.key === 'Delete' || event.key === 'Backspace') {
+                // Don't delete if user is typing in an input/textarea
+                const target = event.target as HTMLElement;
+                if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+                    return;
+                }
+
+                // Check if there's a selection
+                const hasSelectedNodes = nodes.some(n => n.selected);
+                const hasSelectedEdges = edges.some(e => e.selected);
+
+                if (hasSelectedNodes || hasSelectedEdges) {
+                    event.preventDefault();
+                    deleteSelection();
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [nodes, edges, deleteSelection]);
 
     return (
         <main className="flex-1 relative bg-[#0b0e14] flex flex-col overflow-hidden">
@@ -116,6 +152,7 @@ const Workspace: React.FC<WorkspaceProps> = ({
                             onEdgeClick={onEdgeClick}
                             onPaneClick={onPaneClick}
                             fitView
+                            proOptions={{ hideAttribution: true }}
                         >
                             <Background variant={BackgroundVariant.Dots} color="#1e293b" gap={20} size={1} />
 
@@ -142,12 +179,6 @@ const Workspace: React.FC<WorkspaceProps> = ({
                                 maskColor="rgba(0, 0, 0, 0.4)"
                                 className="border border-white/5 rounded-lg overflow-hidden !m-4"
                             />
-                            <Panel position="top-right" className="bg-[#131722]/80 backdrop-blur-md border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-2 m-4 shadow-2xl">
-                                <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                                    {viewMode === 'split' ? 'Multi-Window View' : 'Visual Focused'}
-                                </span>
-                            </Panel>
 
                             {nodes.length === 1 && (
                                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
@@ -169,6 +200,103 @@ const Workspace: React.FC<WorkspaceProps> = ({
                 {/* Code View (VDL Editor) */}
                 {(viewMode === 'split' || viewMode === 'code') && (
                     <div className="relative flex-1 flex flex-col bg-[#0b0e14] transition-all duration-300 overflow-hidden">
+                        {/* Editor Toolbar */}
+                        <div className="h-8 bg-[#131722] border-b border-white/5 flex items-center justify-between px-3 shrink-0">
+                            <div className="flex items-center gap-2">
+                                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">VDL Code</span>
+                                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => {
+                                        if (editorRef.current) {
+                                            navigator.clipboard.writeText(editorRef.current.getValue());
+                                        }
+                                    }}
+                                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-white hover:bg-white/5 rounded transition"
+                                    title="Copy to Clipboard"
+                                >
+                                    Copy
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        if (editorRef.current) {
+                                            editorRef.current.getAction('editor.action.formatDocument')?.run();
+                                        }
+                                    }}
+                                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-white hover:bg-white/5 rounded transition"
+                                    title="Format Code"
+                                >
+                                    Format
+                                </button>
+                                <div className="w-px h-4 bg-white/10" />
+                                <button
+                                    onClick={() => {
+                                        if (editorRef.current) {
+                                            editorRef.current.trigger('keyboard', 'editor.action.fontZoomIn', {});
+                                        }
+                                    }}
+                                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-white hover:bg-white/5 rounded transition"
+                                    title="Zoom In (Ctrl +)"
+                                >
+                                    Zoom+
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        if (editorRef.current) {
+                                            editorRef.current.trigger('keyboard', 'editor.action.fontZoomOut', {});
+                                        }
+                                    }}
+                                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-white hover:bg-white/5 rounded transition"
+                                    title="Zoom Out (Ctrl -)"
+                                >
+                                    Zoom-
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        if (editorRef.current) {
+                                            editorRef.current.trigger('keyboard', 'editor.action.fontZoomReset', {});
+                                        }
+                                    }}
+                                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-500 hover:text-white hover:bg-white/5 rounded transition"
+                                    title="Reset Zoom (Ctrl 0)"
+                                >
+                                    100%
+                                </button>
+                                <div className="w-px h-4 bg-white/10" />
+                                <button
+                                    onClick={() => {
+                                        const name = prompt('Enter snippet name:');
+                                        if (name) onSaveSnippet(name);
+                                    }}
+                                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-amber-400 hover:text-white hover:bg-amber-500/10 rounded transition"
+                                    title="Save as Snippet"
+                                >
+                                    Snippet
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        if (editorRef.current) {
+                                            const content = editorRef.current.getValue();
+                                            const blob = new Blob([content], { type: 'text/plain' });
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = 'flow.vdl';
+                                            document.body.appendChild(a);
+                                            a.click();
+                                            document.body.removeChild(a);
+                                            URL.revokeObjectURL(url);
+                                        }
+                                    }}
+                                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-blue-400 hover:text-white hover:bg-blue-500/10 rounded transition"
+                                    title="Download VDL File"
+                                >
+                                    Save
+                                </button>
+                            </div>
+                        </div>
+
                         {/* Editor Area */}
                         <div className="flex-1 overflow-hidden">
                             <Editor
@@ -176,6 +304,12 @@ const Workspace: React.FC<WorkspaceProps> = ({
                                 defaultLanguage="yaml"
                                 theme="vs-dark"
                                 value={vdlPreview}
+                                onChange={(value) => {
+                                    // Allow editing - sync back to nodes if needed
+                                    if (editorRef.current && value) {
+                                        // Future: implement VDL -> Nodes sync
+                                    }
+                                }}
                                 options={{
                                     minimap: { enabled: false },
                                     fontSize: 11,
@@ -184,6 +318,8 @@ const Workspace: React.FC<WorkspaceProps> = ({
                                     automaticLayout: true,
                                     fontFamily: 'JetBrains Mono, monospace',
                                     padding: { top: 12, bottom: 12 },
+                                    readOnly: false,
+                                    wordWrap: 'on',
                                 }}
                                 onMount={(editor) => {
                                     editorRef.current = editor;
@@ -269,8 +405,27 @@ const Workspace: React.FC<WorkspaceProps> = ({
                 </div>
             </div>
 
-            <Console logs={logs} onClear={onClearLogs} />
-        </main>
+            {/* Console Panel with Collapse Button */}
+            <div className={`bg-[#0d0f14] border-t border-white/10 flex flex-col shrink-0 overflow-hidden shadow-2xl transition-all duration-300 ease-in-out relative
+                ${isConsoleCollapsed ? 'h-0 opacity-0 pointer-events-none' : 'h-48'}`}>
+                <Console
+                    logs={logs}
+                    onClear={onClearLogs}
+                    liveViewMode={liveViewMode}
+                    setLiveViewMode={setLiveViewMode}
+                />
+            </div>
+
+            {/* Console Collapse/Expand Toggle */}
+            <button
+                onClick={() => setIsConsoleCollapsed(!isConsoleCollapsed)}
+                className={`absolute bottom-0 left-1/2 -translate-x-1/2 z-[60] p-1 bg-[#131722] border border-white/10 rounded-t-lg text-slate-500 hover:text-white hover:bg-blue-500/20 transition-all
+                    ${isConsoleCollapsed ? 'translate-y-0' : ''}`}
+                style={{ bottom: isConsoleCollapsed ? 0 : 192 }}
+            >
+                {isConsoleCollapsed ? <PanelLeftClose size={14} className="rotate-90" /> : <PanelLeftClose size={14} className="-rotate-90" />}
+            </button>
+        </main >
     );
 };
 
