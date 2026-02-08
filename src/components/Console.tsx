@@ -10,7 +10,6 @@ interface ConsoleProps {
 }
 
 const Console: React.FC<ConsoleProps> = ({ logs, onClear, liveViewMode, setLiveViewMode }) => {
-    console.log("CONSOLE RECEIVED LOGS:", logs);
     const [isOpen, setIsOpen] = useState(true);
     const [filter, setFilter] = useState<'all' | 'info' | 'warn' | 'error'>('all');
     const scrollRef = useRef<HTMLDivElement>(null);

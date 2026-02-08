@@ -300,11 +300,7 @@ function Studio() {
           editorRef={editorRef}
           nodeTypes={nodeTypes}
           activeNodes={studio.activeNodes}
-          logs={(() => {
-            const merged = [...editor.simulationLogs, ...connection.telemetry];
-            if (editor.simulationLogs.length > 0) console.log("MERGED LOGS TO WORKSPACE:", merged);
-            return merged;
-          })()}
+          logs={[...editor.simulationLogs, ...connection.telemetry]}
           onClearLogs={() => editor.setSimulationLogs([])}
           onSaveSnippet={studio.saveSelectionAsSnippet}
           isConsoleCollapsed={isConsoleCollapsed}
