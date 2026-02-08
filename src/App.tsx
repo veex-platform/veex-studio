@@ -65,8 +65,8 @@ function Studio() {
     registry: { url: import.meta.env.VITE_REGISTRY_URL || 'https://registry.veexplatform.com/api/v1' }
   });
   const [remoteTemplates, setRemoteTemplates] = useState<any[]>([]);
-  const [availableDevices, setAvailableDevices] = useState<any[]>([]);
-  const [targetDevice, setTargetDevice] = useState<string>("all");
+  // const [availableDevices, setAvailableDevices] = useState<any[]>([]); // Removed
+  const [targetDevice] = useState<string>("all"); // Default to cloud/all
   const [statusType, setStatusType] = useState<'info' | 'success' | 'error' | 'loading'>('info');
 
   // Connection State
@@ -117,26 +117,11 @@ function Studio() {
 
     const fetchData = async () => {
       try {
-        const [tmplRes, devRes] = await Promise.all([
-          fetch(`${registryUrl}/dev/templates`),
-          fetch(`${registryUrl}/admin/devices`)
-        ]);
+        const tmplRes = await fetch(`${registryUrl}/dev/templates`);
 
         if (tmplRes.ok) {
           const tmplData = await tmplRes.json();
           setRemoteTemplates(Array.isArray(tmplData) ? tmplData : []);
-        }
-
-        if (devRes.ok) {
-          const devData = await devRes.json();
-          // API returns { devices: [], total: N }
-          if (devData && Array.isArray(devData.devices)) {
-            setAvailableDevices(devData.devices);
-          } else if (Array.isArray(devData)) {
-            setAvailableDevices(devData);
-          } else {
-            setAvailableDevices([]);
-          }
         }
       } catch (err) {
         console.warn("Data fetch failed despite healthy connection:", err);
@@ -177,16 +162,7 @@ function Studio() {
             setStatusType('info');
             setStatus(`New Device: ${device.id}`);
 
-            // Refresh device list
-            fetch(`${registryUrl}/admin/devices`)
-              .then(res => res.json())
-              .then(data => {
-                if (data && Array.isArray(data.devices)) {
-                  setAvailableDevices(data.devices);
-                }
-              })
-              .catch(console.error);
-
+            // Device list refresh removed as we are no longer tracking devices in Studio
             setTimeout(() => setStatus(null), 4000);
           }
         } catch (e) {
@@ -551,6 +527,8 @@ function Studio() {
             <Settings size={16} />
           </button>
 
+          {/* Target Selector Removed for Studio Focus - Defaulting to Cloud/All internally if needed */}
+          {/* 
           <div className="flex items-center gap-2 bg-black/40 border border-white/5 rounded-md px-2 py-1">
             <span className="text-[9px] font-bold text-slate-500 uppercase">Target:</span>
             <select
@@ -564,6 +542,7 @@ function Studio() {
               ))}
             </select>
           </div>
+          */}
 
           <button
             onClick={onDownload}
