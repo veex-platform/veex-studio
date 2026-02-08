@@ -159,7 +159,6 @@ export const useEditorLogic = (
 
             if (response.ok) {
                 const data = await response.json();
-                console.log("SIMULATION DATA RECEIVED:", data);
 
                 const rawLogs = Array.isArray(data.logs) ? data.logs : [];
                 const logs = rawLogs.map((l: any, i: number) => {
@@ -181,11 +180,8 @@ export const useEditorLogic = (
                     };
                 });
 
-                console.log("NORMALIZED LOGS FOR PLAYBACK:", logs);
-
                 // Run visual playback
                 for (const log of logs) {
-                    console.log("ADDING LOG TO STATE:", log);
                     setSimulationLogs(prev => [...prev, log]);
 
                     // Try to extract node label/id from log message to trigger highlight
