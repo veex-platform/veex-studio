@@ -1,13 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Terminal, ChevronDown, ChevronUp, Trash2 } from 'lucide-react';
+import { Terminal, ChevronDown, ChevronUp, Trash2, Eye, Edit3 } from 'lucide-react';
 import type { TelemetryMessage } from '../types';
 
 interface ConsoleProps {
     logs: TelemetryMessage[];
     onClear: () => void;
+    liveViewMode: boolean;
+    setLiveViewMode: (mode: boolean) => void;
 }
 
-const Console: React.FC<ConsoleProps> = ({ logs, onClear }) => {
+const Console: React.FC<ConsoleProps> = ({ logs, onClear, liveViewMode, setLiveViewMode }) => {
+    console.log("CONSOLE RECEIVED LOGS:", logs);
     const [isOpen, setIsOpen] = useState(true);
     const [filter, setFilter] = useState<'all' | 'info' | 'warn' | 'error'>('all');
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -28,7 +31,7 @@ const Console: React.FC<ConsoleProps> = ({ logs, onClear }) => {
                     className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:text-white transition"
                 >
                     <Terminal size={12} className="text-blue-500" />
-                    <span>Telemetry Console ({logs.length})</span>
+                    <span>Console ({logs.length})</span>
                     <ChevronUp size={12} />
                 </button>
             </div>
@@ -45,7 +48,7 @@ const Console: React.FC<ConsoleProps> = ({ logs, onClear }) => {
                         className="flex items-center gap-2 text-[10px] font-bold text-white uppercase tracking-widest"
                     >
                         <Terminal size={12} className="text-blue-500" />
-                        <span>Telemetry Console</span>
+                        <span>Console</span>
                         <ChevronDown size={12} />
                     </button>
 
@@ -64,13 +67,28 @@ const Console: React.FC<ConsoleProps> = ({ logs, onClear }) => {
                     </div>
                 </div>
 
-                <button
-                    onClick={onClear}
-                    className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition"
-                    title="Clear Logs"
-                >
-                    <Trash2 size={12} />
-                </button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setLiveViewMode(!liveViewMode)}
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all duration-300
+                            ${liveViewMode
+                                ? 'bg-blue-600 border border-blue-400 text-white shadow-lg shadow-blue-500/30'
+                                : 'bg-white/5 border border-white/10 text-slate-400 hover:border-white/30 hover:text-white'
+                            }`}
+                        title={liveViewMode ? 'Exit Live View Mode' : 'Enable Live Dashboard View'}
+                    >
+                        {liveViewMode ? <Edit3 size={10} /> : <Eye size={10} />}
+                        {liveViewMode ? 'Live' : 'Live View'}
+                    </button>
+
+                    <button
+                        onClick={onClear}
+                        className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded transition"
+                        title="Clear Logs"
+                    >
+                        <Trash2 size={12} />
+                    </button>
+                </div>
             </div>
 
             {/* Log Area */}
@@ -83,18 +101,30 @@ const Console: React.FC<ConsoleProps> = ({ logs, onClear }) => {
                         No telemetry data available...
                     </div>
                 ) : (
-                    filteredLogs.map(log => (
-                        <div key={log.id} className="flex gap-3 py-0.5 border-b border-white/[0.02] last:border-0 hover:bg-white/[0.02] transition px-1">
-                            <span className="text-slate-500 shrink-0">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                            <span className={`shrink-0 font-bold uppercase w-8 ${log.level === 'error' ? 'text-red-400' :
-                                log.level === 'warn' ? 'text-amber-400' : 'text-blue-400'
-                                }`}>
-                                {log.level}
-                            </span>
-                            <span className="text-slate-300 break-all">{log.message}</span>
-                            <span className="text-slate-600 ml-auto shrink-0">{log.deviceId}</span>
-                        </div>
-                    ))
+                    filteredLogs.map(log => {
+                        let dateStr = 'Unknown Time';
+                        try {
+                            const d = new Date(log.timestamp);
+                            if (!isNaN(d.getTime())) {
+                                dateStr = d.toLocaleTimeString();
+                            }
+                        } catch (e) {
+                            console.warn("Invalid timestamp in log:", log);
+                        }
+
+                        return (
+                            <div key={log.id} className="flex gap-3 py-0.5 border-b border-white/[0.02] last:border-0 hover:bg-white/[0.02] transition px-1">
+                                <span className="text-slate-500 shrink-0">[{dateStr}]</span>
+                                <span className={`shrink-0 font-bold uppercase w-8 ${log.level === 'error' ? 'text-red-400' :
+                                    log.level === 'warn' ? 'text-amber-400' : 'text-blue-400'
+                                    }`}>
+                                    {log.level}
+                                </span>
+                                <span className="text-slate-300 break-all">{log.message || 'Empty message'}</span>
+                                <span className="text-slate-600 ml-auto shrink-0">{log.deviceId}</span>
+                            </div>
+                        );
+                    })
                 )}
             </div>
         </div>

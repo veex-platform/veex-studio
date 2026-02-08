@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useMonaco } from '@monaco-editor/react';
 import { ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { RefreshCw, Loader2, WifiOff } from 'lucide-react';
+import { RefreshCw, Loader2, WifiOff, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { type Node, type Edge } from '@xyflow/react';
 
 // Hooks
@@ -20,21 +20,30 @@ import FleetDashboard from './components/FleetDashboard';
 
 import './index.css';
 import ActionNode from './components/ActionNode';
+import DashboardNode from './components/DashboardNode';
+import TriggerNode from './components/TriggerNode';
 
 const nodeTypes = {
   action: ActionNode,
+  dashboard: DashboardNode,
+  trigger: TriggerNode,
 };
 
 function Studio() {
   // UI State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isFleetOpen, setIsFleetOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<'split' | 'visual' | 'code'>('split');
+  const [viewMode, setViewMode] = useState<'split' | 'visual' | 'code'>('visual');
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('vertical');
   const [isVdlFirst, setIsVdlFirst] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [statusType, setStatusType] = useState<any>('info');
   const [targetDevice] = useState<string>("all");
+  const [libraryWidth, setLibraryWidth] = useState(280);
+  const [isLibraryCollapsed, setIsLibraryCollapsed] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [isPropertiesCollapsed, setIsPropertiesCollapsed] = useState(false);
+  const [isConsoleCollapsed, setIsConsoleCollapsed] = useState(false);
 
   const [projectConfig, setProjectConfig] = useState({
     target: 'esp32',
@@ -67,7 +76,20 @@ function Studio() {
 
   const parseVDL = (vdlStr: string): { nodes: Node[], edges: Edge[] } => {
     const newNodes: Node[] = [
-      { id: '1', type: 'input', data: { label: 'Boot Sequence' }, position: { x: 250, y: 0 }, className: 'bg-white !text-slate-900 border-none rounded-lg px-6 py-3 font-bold shadow-xl !w-[160px] text-center text-[10px]' }
+      {
+        id: '1',
+        type: 'trigger',
+        data: {
+          label: 'Boot Sequence',
+          action: 'boot',
+          params: {
+            priority: 'high',
+            timeout: '30s',
+            retry: '3'
+          }
+        },
+        position: { x: 250, y: 0 }
+      }
     ];
     const newEdges: Edge[] = [];
 
@@ -77,6 +99,16 @@ function Studio() {
     let prevId = '1';
     let isParsingParams = false;
 
+    const createNode = (id: string, step: any, y: number) => {
+      const isDashboard = step.type.startsWith('ui.');
+      return {
+        id,
+        type: isDashboard ? 'dashboard' : 'action',
+        position: { x: 250, y },
+        data: { ...step }
+      };
+    };
+
     stepLines.forEach(line => {
       const trimmed = line.trim();
       const indent = line.search(/\S/);
@@ -84,41 +116,74 @@ function Studio() {
       if (trimmed.startsWith('- name:')) {
         if (currentStep) {
           const id = `${newNodes.length + 1}`;
-          newNodes.push({ id, type: 'action', position: { x: 250, y }, data: currentStep });
+          newNodes.push(createNode(id, currentStep, y));
           newEdges.push({ id: `e${prevId}-${id}`, source: prevId, target: id, animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } });
           prevId = id;
           y += 100;
         }
         isParsingParams = false;
-        currentStep = { label: trimmed.split('"')[1], params: {} };
+        const nameVal = trimmed.split(':').slice(1).join(':').trim().replace(/"/g, '');
+        currentStep = { label: nameVal, params: {}, type: 'platform.core', action: 'wait' };
       } else if (trimmed.startsWith('capability:')) {
-        currentStep.type = trimmed.split('"')[1];
+        currentStep.type = trimmed.split(':').slice(1).join(':').trim().replace(/"/g, '');
       } else if (trimmed.startsWith('action:')) {
-        currentStep.action = trimmed.split('"')[1];
+        currentStep.action = trimmed.split(':').slice(1).join(':').trim().replace(/"/g, '');
       } else if (trimmed.startsWith('params:')) {
         if (trimmed.includes('{')) {
           const pStr = trimmed.split('{')[1].split('}')[0];
           pStr.split(',').forEach(p => {
-            const [k, v] = p.split(':').map(s => s.trim().replace(/"/g, ''));
-            if (k && v) currentStep.params[k] = v;
+            const parts = p.split(':').map(s => s.trim().replace(/"/g, ''));
+            if (parts.length >= 2) currentStep.params[parts[0]] = parts.slice(1).join(':');
           });
         } else {
           isParsingParams = true;
         }
       } else if (isParsingParams && indent >= 8 && trimmed.includes(':')) {
-        const [k, v] = trimmed.split(':').map(s => s.trim().replace(/"/g, ''));
-        if (k && v) currentStep.params[k] = v;
+        const parts = trimmed.split(':').map(s => s.trim().replace(/"/g, ''));
+        if (parts.length >= 2) currentStep.params[parts[0]] = parts.slice(1).join(':');
       }
     });
 
     if (currentStep) {
       const id = `${newNodes.length + 1}`;
-      newNodes.push({ id, type: 'action', position: { x: 250, y }, data: currentStep });
+      newNodes.push(createNode(id, currentStep, y));
       newEdges.push({ id: `e${prevId}-${id}`, source: prevId, target: id, animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } });
     }
 
     return { nodes: newNodes, edges: newEdges };
   };
+
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false);
+  }, []);
+
+  const resize = useCallback((e: MouseEvent) => {
+    if (isResizing) {
+      const newWidth = e.clientX;
+      if (newWidth > 180 && newWidth < 600) {
+        setLibraryWidth(newWidth);
+      }
+    }
+  }, [isResizing]);
+
+  useEffect(() => {
+    if (isResizing) {
+      window.addEventListener('mousemove', resize);
+      window.addEventListener('mouseup', stopResizing);
+    } else {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    }
+    return () => {
+      window.removeEventListener('mousemove', resize);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [isResizing, resize, stopResizing]);
 
   // --------------------------------------------------------------------------
   // RENDER: Loading / Offline / Connected
@@ -175,14 +240,37 @@ function Studio() {
         onOpenFleet={() => setIsFleetOpen(true)}
       />
 
-      <div className="flex-1 flex overflow-hidden">
-        <Library
-          onLoadTemplate={studio.onLoadTemplate}
-          remoteTemplates={connection.remoteTemplates}
-          parseVDL={parseVDL}
-          snippets={studio.snippets}
-          onDeleteSnippet={studio.deleteSnippet}
-        />
+      <div className="flex-1 flex overflow-hidden relative">
+        <div
+          className={`flex flex-col border-r border-white/5 bg-[#0d0f14] transition-all duration-300 ease-in-out relative
+            ${isLibraryCollapsed ? 'w-0 opacity-0 pointer-events-none' : ''}`}
+          style={{ width: isLibraryCollapsed ? 0 : libraryWidth }}
+        >
+          <Library
+            onLoadTemplate={studio.onLoadTemplate}
+            remoteTemplates={connection.remoteTemplates}
+            parseVDL={parseVDL}
+            snippets={studio.snippets}
+            onDeleteSnippet={studio.deleteSnippet}
+          />
+
+          {/* Resize Handle */}
+          <div
+            onMouseDown={startResizing}
+            className={`absolute top-0 -right-0.5 w-1 h-full cursor-col-resize z-50 hover:bg-blue-500/50 transition-colors
+              ${isResizing ? 'bg-blue-500 w-1' : 'bg-transparent'}`}
+          />
+        </div>
+
+        {/* Collapse/Expand Toggle */}
+        <button
+          onClick={() => setIsLibraryCollapsed(!isLibraryCollapsed)}
+          className={`absolute left-0 top-1/2 -translate-y-1/2 z-[60] p-1 bg-[#131722] border border-white/10 rounded-r-lg text-slate-500 hover:text-white hover:bg-blue-500/20 transition-all
+            ${isLibraryCollapsed ? 'translate-x-0' : ''}`}
+          style={{ left: isLibraryCollapsed ? 0 : libraryWidth }}
+        >
+          {isLibraryCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+        </button>
 
         <Workspace
           nodes={studio.nodes}
@@ -212,19 +300,39 @@ function Studio() {
           editorRef={editorRef}
           nodeTypes={nodeTypes}
           activeNodes={studio.activeNodes}
-          logs={connection.telemetry}
-          onClearLogs={() => { }}
+          logs={(() => {
+            const merged = [...editor.simulationLogs, ...connection.telemetry];
+            if (editor.simulationLogs.length > 0) console.log("MERGED LOGS TO WORKSPACE:", merged);
+            return merged;
+          })()}
+          onClearLogs={() => editor.setSimulationLogs([])}
           onSaveSnippet={studio.saveSelectionAsSnippet}
-        />
-
-        <Sidebar
-          selectedNode={studio.selectedNode}
-          selectedEdge={studio.selectedEdge}
-          viewMode={viewMode}
-          onSetViewMode={setViewMode}
-          updateNodeData={studio.updateNodeData}
+          isConsoleCollapsed={isConsoleCollapsed}
+          setIsConsoleCollapsed={setIsConsoleCollapsed}
           deleteSelection={studio.deleteSelection}
         />
+
+        <div className={`shrink-0 bg-[#131722]/50 backdrop-blur-3xl flex flex-col min-h-0 border-l border-white/5 transition-all duration-300 ease-in-out relative
+          ${isPropertiesCollapsed ? 'w-0 opacity-0 pointer-events-none' : 'w-[300px]'}`}>
+          <Sidebar
+            selectedNode={studio.selectedNode}
+            selectedEdge={studio.selectedEdge}
+            viewMode={viewMode}
+            onSetViewMode={setViewMode}
+            updateNodeData={studio.updateNodeData}
+            deleteSelection={studio.deleteSelection}
+          />
+        </div>
+
+        {/* Properties Panel Collapse/Expand Toggle */}
+        <button
+          onClick={() => setIsPropertiesCollapsed(!isPropertiesCollapsed)}
+          className={`absolute right-0 top-1/2 -translate-y-1/2 z-[60] p-1 bg-[#131722] border border-white/10 rounded-l-lg text-slate-500 hover:text-white hover:bg-blue-500/20 transition-all
+            ${isPropertiesCollapsed ? 'translate-x-0' : ''}`}
+          style={{ right: isPropertiesCollapsed ? 0 : 300 }}
+        >
+          {isPropertiesCollapsed ? <PanelLeftClose size={14} className="rotate-180" /> : <PanelLeftClose size={14} />}
+        </button>
       </div>
 
       {status && (

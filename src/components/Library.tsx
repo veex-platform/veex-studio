@@ -1,7 +1,8 @@
 import {
     Cpu, Clock, Database, Send, Network,
     Activity, Thermometer, Droplets,
-    Globe, Search, ChevronDown, Scissors, Trash2, Zap
+    Globe, Search, ChevronDown, Scissors, Trash2, Zap, Tag,
+    Gauge, LineChart, ChevronsUpDown, ChevronsDownUp, Repeat
 } from 'lucide-react';
 import React, { useState } from 'react';
 
@@ -12,9 +13,9 @@ const templates = [
         description: 'Control GPIO pins via MQTT messages.',
         icon: <Send size={14} />,
         nodes: [
-            { id: '1', type: 'input', data: { label: 'Boot Sequence' }, position: { x: 250, y: 0 }, className: 'bg-white !text-slate-900 border-none rounded-lg px-6 py-3 font-bold shadow-xl !w-[160px] text-center text-[10px]' },
-            { id: '2', type: 'action', data: { label: 'Listen MQTT', action: 'subscribe', type: 'comm.mqtt', params: { topic: 'v1/device/control/+' } }, position: { x: 250, y: 100 } },
-            { id: '3', type: 'action', data: { label: 'Write GPIO', action: 'write', type: 'platform.gpio', params: { pin: '2', level: '$PAYLOAD' } }, position: { x: 250, y: 200 } },
+            { id: '1', type: 'trigger', data: { label: 'Boot Sequence', action: 'boot', params: { priority: 'high', timeout: '30s', retry: '3' } }, position: { x: 250, y: 0 } },
+            { id: '2', type: 'action', data: { label: 'Listen MQTT', action: 'subscribe', type: 'comm.mqtt', params: { action: 'subscribe', topic: 'v1/device/control/+' } }, position: { x: 250, y: 100 } },
+            { id: '3', type: 'action', data: { label: 'Write GPIO', action: 'write', type: 'platform.gpio', params: { action: 'write', pin: '2', level: '$PAYLOAD' } }, position: { x: 250, y: 200 } },
         ],
         edges: [
             { id: 'e1-2', source: '1', target: '2', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
@@ -27,9 +28,9 @@ const templates = [
         description: 'Forward CAN messages to a central MQTT broker.',
         icon: <Network size={14} />,
         nodes: [
-            { id: '1', type: 'input', data: { label: 'Boot Sequence' }, position: { x: 250, y: 0 }, className: 'bg-white !text-slate-900 border-none rounded-lg px-6 py-3 font-bold shadow-xl !w-[160px] text-center text-[10px]' },
-            { id: '2', type: 'action', data: { label: 'Read CAN', action: 'read', type: 'comm.can', params: { id: '0x123' } }, position: { x: 250, y: 100 } },
-            { id: '3', type: 'action', data: { label: 'Publish Data', action: 'publish', type: 'comm.mqtt', params: { topic: 'v1/can/raw', payload: '$DATA' } }, position: { x: 250, y: 200 } },
+            { id: '1', type: 'trigger', data: { label: 'Boot Sequence', action: 'boot', params: { priority: 'high', timeout: '30s', retry: '3' } }, position: { x: 250, y: 0 } },
+            { id: '2', type: 'action', data: { label: 'Read CAN', action: 'read', type: 'comm.can', params: { action: 'read', id: '0x123' } }, position: { x: 250, y: 100 } },
+            { id: '3', type: 'action', data: { label: 'Publish Data', action: 'publish', type: 'comm.mqtt', params: { action: 'publish', topic: 'v1/can/raw', payload: '$DATA' } }, position: { x: 250, y: 200 } },
         ],
         edges: [
             { id: 'e1-2', source: '1', target: '2', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
@@ -45,16 +46,17 @@ const categories = [
         items: [
             { type: 'action', label: 'Wait (Delay)', capability: 'platform.core', icon: <Clock size={14} />, params: { ms: '1000' }, action: 'wait' },
             { type: 'action', label: 'System Check', capability: 'platform.core', icon: <Activity size={14} />, params: { check: 'uptime' }, action: 'wait' },
+            { type: 'action', label: 'Main Loop', capability: 'platform.core', icon: <Repeat size={14} />, action: 'loop' },
         ]
     },
     {
         id: 'digital',
         title: 'Digital I/O & Bus',
         items: [
-            { type: 'action', label: 'GPIO Write', capability: 'platform.gpio', icon: <Cpu size={14} />, params: { pin: '2', level: '1' }, action: 'write' },
-            { type: 'action', label: 'I2C Read', capability: 'platform.i2c', icon: <Database size={14} />, params: { address: '0x68', register: '0x3B' }, action: 'read' },
-            { type: 'action', label: 'SPI Transfer', capability: 'platform.spi', icon: <Database size={14} />, params: { cs: '15', data: "0x00" }, action: 'transfer' },
-            { type: 'action', label: 'Modbus Read', capability: 'modbus', icon: <Cpu size={14} />, params: { address: '4001', count: '1' }, action: 'read' },
+            { type: 'action', label: 'GPIO', capability: 'platform.gpio', icon: <Cpu size={14} />, params: { pin: '2', action: 'write', level: '1' }, action: 'write' },
+            { type: 'action', label: 'I2C', capability: 'platform.i2c', icon: <Database size={14} />, params: { address: '0x68', action: 'read', register: '0x3B' }, action: 'read' },
+            { type: 'action', label: 'SPI', capability: 'platform.spi', icon: <Database size={14} />, params: { cs: '15', action: 'transfer', data: "0x00" }, action: 'transfer' },
+            { type: 'action', label: 'Modbus', capability: 'modbus', icon: <Cpu size={14} />, params: { address: '4001', action: 'read', count: '1' }, action: 'read' },
         ]
     },
     {
@@ -68,16 +70,32 @@ const categories = [
         id: 'comms',
         title: 'Industrial Comms',
         items: [
-            { type: 'action', label: 'CAN Send', capability: 'comm.can', icon: <Network size={14} />, params: { id: '0x123' }, action: 'read' },
-            { type: 'action', label: 'MQTT Publish', capability: 'comm.mqtt', icon: <Send size={14} />, params: { topic: 'v1/telemetry' }, action: 'publish' },
+            { type: 'action', label: 'CAN Bus', capability: 'comm.can', icon: <Network size={14} />, params: { id: '0x123', action: 'send' }, action: 'send' },
+            { type: 'action', label: 'MQTT', capability: 'comm.mqtt', icon: <Send size={14} />, params: { topic: 'v1/telemetry', action: 'publish' }, action: 'publish' },
         ]
     },
     {
         id: 'sensors',
         title: 'Sensors & Actuators',
         items: [
-            { type: 'action', label: 'Temp (Generic)', capability: 'platform.sensor', icon: <Thermometer size={14} />, params: { type: 'temperature' }, action: 'read' },
-            { type: 'action', label: 'Humidity (Generic)', capability: 'platform.sensor', icon: <Droplets size={14} />, params: { type: 'humidity' }, action: 'read' },
+            { type: 'action', label: 'Temperature', capability: 'platform.sensor', icon: <Thermometer size={14} />, params: { type: 'temperature' }, action: 'read' },
+            { type: 'action', label: 'Humidity', capability: 'platform.sensor', icon: <Droplets size={14} />, params: { type: 'humidity' }, action: 'read' },
+        ]
+    },
+    {
+        id: 'logic',
+        title: 'Logic & State',
+        items: [
+            { type: 'action', label: 'State Variable', capability: 'platform.logic', icon: <Tag size={14} />, params: { key: 'my_var', action: 'set', value: '10' }, action: 'set' },
+        ]
+    },
+    {
+        id: 'dashboard',
+        title: 'Live View Dashboard',
+        items: [
+            { type: 'dashboard', label: 'Gauge Display', capability: 'ui.gauge', icon: <Gauge size={14} />, params: { telemetryKey: 'temp', min: '0', max: '100', unit: '°C' }, action: 'display' },
+            { type: 'dashboard', label: 'Real-time Chart', capability: 'ui.chart', icon: <LineChart size={14} />, params: { telemetryKey: 'vibration', buffer: '50' }, action: 'stream' },
+            { type: 'dashboard', label: 'Status LED', capability: 'ui.led', icon: <Activity size={14} />, params: { telemetryKey: 'status', colorOn: '#10b981', colorOff: '#334155' }, action: 'indicator' },
         ]
     }
 ];
@@ -95,22 +113,28 @@ export default function Library({
     snippets?: any[],
     onDeleteSnippet?: (id: string) => void
 }) {
-    const [openCats, setOpenCats] = useState<string[]>(['templates', 'snippets', ...categories.map(c => c.id)]);
+    const [openCats, setOpenCats] = useState<string[]>([]);
 
-    const groupedRemoteTemplates = React.useMemo(() => {
-        const groups: Record<string, any[]> = {};
-        if (Array.isArray(remoteTemplates)) {
-            remoteTemplates.forEach(tmpl => {
-                const cat = tmpl.category || 'other';
-                if (!groups[cat]) groups[cat] = [];
-                groups[cat].push(tmpl);
-            });
-        }
-        return groups;
-    }, [remoteTemplates]);
 
-    const onDragStart = (event: React.DragEvent, nodeData: any) => {
-        event.dataTransfer.setData('application/reactflow', JSON.stringify(nodeData));
+
+    const onDragStart = (event: React.DragEvent, nodeType: string, capability: string, label: string, action: string, params: any) => {
+        const dragData = {
+            type: nodeType,
+            capability,
+            label,
+            action,
+            params
+        };
+        event.dataTransfer.setData('application/reactflow', JSON.stringify(dragData));
+        event.dataTransfer.effectAllowed = 'move';
+    };
+
+    const onDragSnippetStart = (event: React.DragEvent, snippetId: string) => {
+        const dragData = {
+            type: 'snippet',
+            id: snippetId
+        };
+        event.dataTransfer.setData('application/reactflow', JSON.stringify(dragData));
         event.dataTransfer.effectAllowed = 'move';
     };
 
@@ -119,140 +143,169 @@ export default function Library({
     };
 
     return (
-        <div className="w-[260px] shrink-0 border-r border-white/5 bg-[#131722]/40 backdrop-blur-xl flex flex-col h-full z-40">
-            <div className="p-4 border-b border-white/5 bg-white/5">
-                <div className="relative group">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-blue-400 transition" />
+        <div className="flex-1 flex flex-col min-h-0 bg-[#0d0f14]">
+            <div className="p-4 flex items-center gap-3 border-b border-white/5 bg-[#131722]/50">
+                <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
                     <input
                         type="text"
                         placeholder="Search capabilities..."
-                        className="w-full bg-black/40 border border-white/10 rounded-lg py-1.5 pl-9 pr-4 text-[11px] text-slate-300 focus:border-blue-500/50 outline-none transition"
+                        className="w-full bg-black/40 border border-white/10 rounded-lg py-2 pl-9 pr-4 text-[11px] text-slate-300 outline-none focus:border-blue-500/50 transition-all font-medium"
                     />
+                </div>
+                <div className="flex items-center gap-1">
+                    <button
+                        onClick={() => setOpenCats(['templates', 'snippets', 'remote-gallery', ...categories.map(c => c.id)])}
+                        title="Expand All"
+                        className="p-2 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition"
+                    >
+                        <ChevronsUpDown size={14} />
+                    </button>
+                    <button
+                        onClick={() => setOpenCats([])}
+                        title="Collapse All"
+                        className="p-2 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition"
+                    >
+                        <ChevronsDownUp size={14} />
+                    </button>
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto py-4 scrollbar-hide">
-                <h2 className="px-5 text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Templates</h2>
-
-                <div className="mb-6">
+            <div className="flex-1 overflow-y-auto px-2 py-4 space-y-4 scrollbar-hide">
+                {/* Templates Section */}
+                <div className="space-y-1">
                     <button
                         onClick={() => toggleCat('templates')}
-                        className="w-full flex items-center justify-between px-5 py-2 hover:bg-white/5 transition group"
+                        className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 transition group"
                     >
-                        <span className="text-[11px] font-bold text-blue-400 flex items-center gap-3">
-                            <ChevronDown size={14} className={`text-blue-500 transition-transform ${openCats.includes('templates') ? '' : '-rotate-90'}`} />
-                            Quick Templates
-                        </span>
+                        <span className="text-[10px] font-black tracking-[0.15em] text-slate-500 uppercase group-hover:text-slate-300">Starter Templates</span>
+                        <ChevronDown size={12} className={`text-slate-600 transition-transform ${openCats.includes('templates') ? '' : '-rotate-90'}`} />
                     </button>
-
                     {openCats.includes('templates') && (
-                        <div className="mt-2 px-4 space-y-2">
-                            {templates.map((tmpl) => (
-                                <button
-                                    key={tmpl.id}
-                                    onClick={() => onLoadTemplate(tmpl.nodes, tmpl.edges)}
-                                    className="w-full text-left p-3 rounded-lg bg-white/5 border border-white/5 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all group"
+                        <div className="px-2 pt-1 pb-2 space-y-2">
+                            {templates.map(t => (
+                                <div
+                                    key={t.id}
+                                    onClick={() => onLoadTemplate(t.nodes, t.edges)}
+                                    className="p-3 bg-[#131722] border border-white/5 rounded-xl cursor-pointer hover:border-blue-500/50 hover:bg-blue-500/[0.02] transition-all group"
                                 >
-                                    <div className="flex items-center gap-3 mb-1">
-                                        <div className="text-blue-500 group-hover:scale-110 transition-transform">{tmpl.icon}</div>
-                                        <span className="text-[11px] font-bold text-slate-200">{tmpl.title}</span>
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 group-hover:bg-blue-500/20 transition">
+                                            {t.icon}
+                                        </div>
+                                        <h4 className="text-[11px] font-bold text-slate-200">{t.title}</h4>
                                     </div>
-                                    <p className="text-[9px] text-slate-500 leading-tight">{tmpl.description}</p>
-                                </button>
-                            ))}
-
-                            {Object.entries(groupedRemoteTemplates).map(([category, tmpls]) => (
-                                <div key={category} className="pt-4 border-t border-white/5 mt-4">
-                                    <h3 className="px-2 text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">{category}</h3>
-                                    <div className="space-y-2">
-                                        {tmpls.map((tmpl) => (
-                                            <button
-                                                key={tmpl.id}
-                                                onClick={() => {
-                                                    const { nodes, edges } = parseVDL(tmpl.vdl);
-                                                    onLoadTemplate(nodes, edges);
-                                                }}
-                                                className="w-full text-left p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 hover:border-blue-400 hover:bg-blue-600/20 transition-all group"
-                                            >
-                                                <div className="flex items-center gap-3 mb-1">
-                                                    <div className="text-emerald-500 group-hover:scale-110 transition-transform"><Globe size={14} /></div>
-                                                    <span className="text-[11px] font-bold text-slate-100">{tmpl.title}</span>
-                                                </div>
-                                                <p className="text-[9px] text-slate-400 leading-tight">{tmpl.description}</p>
-                                            </button>
-                                        ))}
-                                    </div>
+                                    <p className="text-[10px] text-slate-500 leading-relaxed font-medium">{t.description}</p>
                                 </div>
                             ))}
                         </div>
                     )}
                 </div>
 
-                <div className="mb-6">
-                    <button
-                        onClick={() => toggleCat('snippets')}
-                        className="w-full flex items-center justify-between px-5 py-2 hover:bg-white/5 transition group"
-                    >
-                        <span className="text-[11px] font-bold text-amber-500 flex items-center gap-3">
-                            <ChevronDown size={14} className={`text-amber-500 transition-transform ${openCats.includes('snippets') ? '' : '-rotate-90'}`} />
-                            Custom Snippets
-                        </span>
-                        <span className="text-[9px] bg-amber-500/10 text-amber-500 px-1.5 rounded-full font-black ml-auto border border-amber-500/20">
-                            {snippets.length}
-                        </span>
-                    </button>
-
-                    {openCats.includes('snippets') && (
-                        <div className="mt-2 px-4 space-y-2">
-                            {snippets.length === 0 ? (
-                                <p className="text-[9px] text-slate-600 px-1 italic">Save nodes as snippets...</p>
-                            ) : (
-                                snippets.map((snip) => (
-                                    <div key={snip.id} className="group relative">
-                                        <div
-                                            draggable
-                                            onDragStart={(e) => onDragStart(e, { type: 'snippet', id: snip.id })}
-                                            className="w-full text-left p-2.5 rounded-lg bg-white/5 border border-white/5 hover:border-amber-500/30 hover:bg-amber-500/5 transition-all cursor-grab active:cursor-grabbing"
-                                        >
-                                            <div className="flex items-center gap-2">
-                                                <div className="text-amber-500"><Scissors size={12} /></div>
-                                                <span className="text-[10px] font-bold text-slate-300 truncate pr-6">{snip.name}</span>
+                {/* VEEX Platform Gallery (Consolidated) */}
+                {remoteTemplates.length > 0 && (
+                    <div className="space-y-1">
+                        <button
+                            onClick={() => toggleCat('remote-gallery')}
+                            className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 transition group"
+                        >
+                            <span className="text-[10px] font-black tracking-[0.15em] text-slate-500 uppercase group-hover:text-slate-300">Platform Gallery</span>
+                            <ChevronDown size={12} className={`text-slate-600 transition-transform ${openCats.includes('remote-gallery') ? '' : '-rotate-90'}`} />
+                        </button>
+                        {openCats.includes('remote-gallery') && (
+                            <div className="px-2 pt-1 pb-2 space-y-2">
+                                {remoteTemplates.map(t => (
+                                    <div
+                                        key={t.id}
+                                        onClick={() => {
+                                            const res = parseVDL(t.vdl);
+                                            onLoadTemplate(res.nodes, res.edges);
+                                        }}
+                                        className="p-3 bg-[#131722] border border-white/5 rounded-xl cursor-pointer hover:border-emerald-500/50 hover:bg-emerald-500/[0.02] transition-all group"
+                                    >
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-3">
+                                                <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20 transition">
+                                                    <Globe size={14} />
+                                                </div>
+                                                <h4 className="text-[11px] font-bold text-slate-200">{t.name}</h4>
                                             </div>
+                                            <span className="text-[8px] font-black text-emerald-500/50 uppercase border border-emerald-500/20 px-1.5 py-0.5 rounded-md">
+                                                {t.category || 'Core'}
+                                            </span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-500 leading-relaxed font-medium line-clamp-2">{t.description}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Custom Snippets */}
+                {snippets.length > 0 && (
+                    <div className="space-y-1">
+                        <button
+                            onClick={() => toggleCat('snippets')}
+                            className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 transition group"
+                        >
+                            <span className="text-[10px] font-black tracking-[0.15em] text-slate-500 uppercase group-hover:text-slate-300">Saved Snippets</span>
+                            <ChevronDown size={12} className={`text-slate-600 transition-transform ${openCats.includes('snippets') ? '' : '-rotate-90'}`} />
+                        </button>
+                        {openCats.includes('snippets') && (
+                            <div className="px-2 pt-1 pb-2 space-y-2">
+                                {snippets.map(s => (
+                                    <div
+                                        key={s.id}
+                                        draggable
+                                        onDragStart={(e) => onDragSnippetStart(e, s.id)}
+                                        className="p-3 bg-[#131722] border border-white/5 rounded-xl cursor-grab active:cursor-grabbing hover:border-amber-500/50 hover:bg-amber-500/[0.02] transition-all group relative"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 group-hover:bg-amber-500/20 transition">
+                                                <Scissors size={14} />
+                                            </div>
+                                            <h4 className="text-[11px] font-bold text-slate-200">{s.name}</h4>
                                         </div>
                                         <button
-                                            onClick={() => onDeleteSnippet?.(snip.id)}
-                                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onDeleteSnippet?.(s.id);
+                                            }}
+                                            className="absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 text-slate-600 hover:text-red-500 transition"
                                         >
                                             <Trash2 size={12} />
                                         </button>
                                     </div>
-                                ))
-                            )}
-                        </div>
-                    )}
-                </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
 
-                <div className="h-px bg-white/5 mx-5 mb-6" />
-
-                {categories.map((cat) => (
-                    <div key={cat.id} className="mb-1">
-                        <button onClick={() => toggleCat(cat.id)} className="w-full flex items-center justify-between px-5 py-2 hover:bg-white/5 transition group">
-                            <span className="text-[11px] font-bold text-slate-300 flex items-center gap-3">
-                                <ChevronDown size={14} className={`text-slate-600 transition-transform ${openCats.includes(cat.id) ? '' : '-rotate-90'}`} />
-                                {cat.title}
-                            </span>
+                {/* Capability Categories */}
+                {categories.map(cat => (
+                    <div key={cat.id} className="space-y-1">
+                        <button
+                            onClick={() => toggleCat(cat.id)}
+                            className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 transition group"
+                        >
+                            <span className="text-[10px] font-black tracking-[0.15em] text-slate-500 uppercase group-hover:text-slate-300">{cat.title}</span>
+                            <ChevronDown size={12} className={`text-slate-600 transition-transform ${openCats.includes(cat.id) ? '' : '-rotate-90'}`} />
                         </button>
                         {openCats.includes(cat.id) && (
-                            <div className="mt-1 pb-2">
-                                {cat.items.map((item) => (
+                            <div className="grid grid-cols-1 gap-1.5 px-2">
+                                {cat.items.map(item => (
                                     <div
                                         key={item.label}
-                                        className="group flex items-center gap-3 px-10 py-2 cursor-grab active:cursor-grabbing hover:bg-blue-600/10 transition-all border-l-2 border-transparent hover:border-blue-500"
-                                        onDragStart={(event) => onDragStart(event, item)}
                                         draggable
+                                        onDragStart={(e) => onDragStart(e, item.type, item.capability, item.label, item.action, item.params)}
+                                        className="flex items-center gap-3 px-3 py-2 bg-[#131722] border border-white/[0.03] rounded-lg cursor-grab active:cursor-grabbing hover:border-blue-500/30 hover:bg-blue-500/[0.02] transition-all group"
                                     >
-                                        <div className="text-slate-500 group-hover:text-blue-400 transition">{item.icon}</div>
-                                        <span className="text-[11px] text-slate-400 group-hover:text-slate-200 transition truncate">{item.label}</span>
+                                        <div className="text-slate-500 group-hover:text-blue-400 transition">
+                                            {item.icon}
+                                        </div>
+                                        <span className="text-[10px] font-medium text-slate-300 group-hover:text-white transition">{item.label}</span>
                                     </div>
                                 ))}
                             </div>

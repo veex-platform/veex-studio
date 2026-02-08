@@ -9,7 +9,8 @@ export const useEditorLogic = (
     monaco: any,
     editorRef: any,
     setStatus: (s: string | null) => void,
-    setStatusType: (t: any) => void
+    setStatusType: (t: any) => void,
+    triggerActiveNode?: (nodeId: string) => void
 ) => {
     const [deploying, setDeploying] = useState(false);
     const [simulating, setSimulating] = useState(false);
@@ -24,7 +25,18 @@ export const useEditorLogic = (
         const steps = actionNodes
             .map((n) => {
                 const d = n.data as any;
-                return `    - name: "${n.id}_${d.action}"\n      capability: "${d.type}"\n      action: "${d.action}"\n      params:\n${Object.entries(d.params || {}).map(([k, v]) => `        ${k}: ${typeof v === 'string' && !v.startsWith('0x') ? `"${v}"` : v}`).join('\n')}`;
+                const paramBlock = Object.entries(d.params || {})
+                    .map(([k, v]) => {
+                        const val = String(v);
+                        const isNumeric = !isNaN(Number(val)) && val.trim() !== '';
+                        const isHex = val.startsWith('0x');
+                        const isVar = val.startsWith('$');
+                        const formattedVal = (isHex || isNumeric || isVar) ? val : `"${val}"`;
+                        return `        ${k}: ${formattedVal}`;
+                    })
+                    .join('\n');
+
+                return `    - name: "${d.label || n.id}"\n      capability: "${d.type}"\n      action: "${d.action}"\n      params:\n${paramBlock}`;
             })
             .join('\n');
 
@@ -120,24 +132,101 @@ export const useEditorLogic = (
         setStatusType('loading');
         setStatus("Starting Simulation...");
         try {
+            // Initial Mock Infomation
+            const mockLogs = [
+                {
+                    id: `sim-init-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    level: 'info' as const,
+                    message: "SIMULATOR: Mocking I/O and Network interfaces",
+                    deviceId: 'simulator'
+                },
+                {
+                    id: `sim-mock-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    level: 'info' as const,
+                    message: "MOCK: Redirecting platform.gpio to virtual bus",
+                    deviceId: 'simulator'
+                }
+            ];
+            setSimulationLogs(mockLogs);
+
             const response = await fetch(`${registryUrl}/dev/simulate`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ vdl: vdlPreview, payload: { "simulated": true } })
             });
+
             if (response.ok) {
                 const data = await response.json();
-                setSimulationLogs(data.logs || []);
+                console.log("SIMULATION DATA RECEIVED:", data);
+
+                const rawLogs = Array.isArray(data.logs) ? data.logs : [];
+                const logs = rawLogs.map((l: any, i: number) => {
+                    // Robust timestamp check
+                    let ts = new Date().toISOString();
+                    if (l.timestamp) {
+                        const d = new Date(l.timestamp);
+                        if (!isNaN(d.getTime())) {
+                            ts = d.toISOString();
+                        }
+                    }
+
+                    return {
+                        id: `sim-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 9)}`,
+                        timestamp: ts,
+                        level: (['info', 'warn', 'error'].includes(l.level)) ? l.level : 'info',
+                        message: typeof l === 'string' ? l : (l.message || JSON.stringify(l)),
+                        deviceId: 'simulator'
+                    };
+                });
+
+                console.log("NORMALIZED LOGS FOR PLAYBACK:", logs);
+
+                // Run visual playback
+                for (const log of logs) {
+                    console.log("ADDING LOG TO STATE:", log);
+                    setSimulationLogs(prev => [...prev, log]);
+
+                    // Try to extract node label/id from log message to trigger highlight
+                    // Assuming log format might contain node names
+                    const nodeMatch = nodes.find(n =>
+                        log.message.includes(n.data.label as string) ||
+                        log.message.includes(n.id)
+                    );
+
+                    if (nodeMatch && triggerActiveNode) {
+                        triggerActiveNode(nodeMatch.id);
+                    }
+
+                    // Playback delay
+                    await new Promise(r => setTimeout(r, 400));
+                }
+
                 setStatusType('success');
                 setStatus("Simulation Finished");
             } else {
                 const err = await response.text();
-                setSimulationLogs([{ timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Failed: ${err}` }]);
+                const errorLog = {
+                    id: `sim-err-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    level: 'error' as const,
+                    message: `Failed: ${err}`,
+                    deviceId: 'simulator'
+                };
+                setSimulationLogs(prev => [...prev, errorLog]);
                 setStatusType('error');
                 setStatus("Simulation Failed");
             }
         } catch (e: any) {
-            setSimulationLogs([{ timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Connection Error: ${e.message}` }]);
+            const errorLog = {
+                id: `sim-conn-err-${Date.now()}`,
+                timestamp: new Date().toISOString(),
+                level: 'error' as const,
+                message: `Connection Error: ${e.message}`,
+                deviceId: 'simulator'
+            };
+            setSimulationLogs(prev => [...prev, errorLog]);
             setStatusType('error');
             setStatus("Simulation Error");
         } finally {
