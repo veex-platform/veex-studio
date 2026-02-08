@@ -1,501 +1,62 @@
-import React, { useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import Editor, { useMonaco } from '@monaco-editor/react';
-import {
-  ReactFlow,
-  addEdge,
-  Background,
-  useNodesState,
-  useEdgesState,
-  type Connection,
-  type Edge,
-  type Node,
-  ReactFlowProvider,
-  BackgroundVariant,
-  Controls,
-  MiniMap,
-  Panel,
-} from '@xyflow/react';
+import { useState, useRef } from 'react';
+import { useMonaco } from '@monaco-editor/react';
+import { ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { RefreshCw, Loader2, WifiOff } from 'lucide-react';
+import { type Node, type Edge } from '@xyflow/react';
+
+// Hooks
+import { useStudioState } from './hooks/useStudioState';
+import { usePlatformConnection } from './hooks/usePlatformConnection';
+import { useEditorLogic } from './hooks/useEditorLogic';
+
+// Components
+import Navbar from './components/Navbar';
+import Sidebar from './components/Sidebar';
+import Workspace from './components/Workspace';
+import Library from './components/Library';
+import SettingsModal from './components/SettingsModal';
+
 import './index.css';
 import ActionNode from './components/ActionNode';
-import Library from './components/Library';
-import { Download, Database, ListTree, Zap, ChevronDown, UserCircle, Trash2, Settings, Minimize2, Loader2, CheckCircle2, AlertCircle, Info, RefreshCw, WifiOff, Play, Terminal, Columns, Rows, ArrowLeftRight, Monitor } from 'lucide-react';
-import SettingsModal from './components/SettingsModal';
-import { motion, AnimatePresence } from 'framer-motion';
 
 const nodeTypes = {
   action: ActionNode,
 };
 
-const initialNodes: Node[] = [
-  {
-    id: '1',
-    type: 'input',
-    data: { label: 'Boot Sequence' },
-    position: { x: 300, y: 50 },
-    className: 'bg-white !text-slate-900 border-none rounded-lg px-6 py-3 font-bold shadow-xl !w-[160px] text-center text-[10px]',
-  },
-  {
-    id: '2',
-    type: 'action',
-    data: { label: 'Industrial Blink', action: 'write', type: 'platform.gpio', params: { pin: '2', level: '1' } },
-    position: { x: 300, y: 150 },
-  },
-];
-
-const initialEdges: Edge[] = [
-  { id: 'e1-2', source: '1', target: '2', animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } },
-];
-
-let id = 3;
-const getId = () => `${id++}`;
-
-type ConnectionState = 'initializing' | 'checking' | 'connected' | 'offline' | 'reconnecting';
-
 function Studio() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
-  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
-  const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
-  const [deploying, setDeploying] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  // UI State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [viewMode, setViewMode] = useState<'split' | 'visual' | 'code'>('split');
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('vertical');
   const [isVdlFirst, setIsVdlFirst] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [statusType, setStatusType] = useState<any>('info');
+  const [targetDevice] = useState<string>("all");
+
   const [projectConfig, setProjectConfig] = useState({
     target: 'esp32',
     wifi: { ssid: 'Factory_Guest', password: 'secure_iot_pass' },
     mqtt: { broker: 'tcp://broker.emqx.io:1883' },
     registry: { url: import.meta.env.VITE_REGISTRY_URL || 'https://registry.veexplatform.com/api/v1' }
   });
-  const [remoteTemplates, setRemoteTemplates] = useState<any[]>([]);
-  // const [availableDevices, setAvailableDevices] = useState<any[]>([]); // Removed
-  const [targetDevice] = useState<string>("all"); // Default to cloud/all
-  const [statusType, setStatusType] = useState<'info' | 'success' | 'error' | 'loading'>('info');
-  const [simulating, setSimulating] = useState(false);
-  const [simulationLogs, setSimulationLogs] = useState<any[]>([]);
-  const [showConsole, setShowConsole] = useState(false);
-  const [validationErrors, setValidationErrors] = useState<any[]>([]);
-  const editorRef = useRef<any>(null);
+
   const monaco = useMonaco();
+  const editorRef = useRef<any>(null);
 
-  // Connection State
-  const [connectionState, setConnectionState] = useState<ConnectionState>('initializing');
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-
-  // Industrial Connectivity: Dynamic Backend Discovery
-  const registryUrl = useMemo(() => {
-    const configUrl = projectConfig.registry?.url;
-    if (configUrl) {
-      if (configUrl.startsWith('http')) return configUrl;
-      // Handle relative paths
-      if (configUrl.startsWith('/')) return `${window.location.origin}${configUrl}`;
-      return configUrl;
-    }
-    return 'https://registry.veexplatform.com/api/v1';
-  }, [projectConfig.registry?.url]);
-
-  const checkHealth = useCallback(async () => {
-    setConnectionState('checking');
-    setConnectionError(null);
-    try {
-      // Use the admin health endpoint which checks DB connectivity too
-      const res = await fetch(`${registryUrl}/admin/health`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      if (data.status === 'healthy' || data.database === 'connected') {
-        setConnectionState('connected');
-      } else {
-        throw new Error('Backend unhealthy');
-      }
-    } catch (err: any) {
-      console.error("Health Check Failed:", err);
-      setConnectionState('offline');
-      setConnectionError(err.message || 'Connection refused');
-    }
-  }, [registryUrl]);
-
-  // Initial Health Check
-  useEffect(() => {
-    checkHealth();
-  }, [checkHealth]);
-
-  // Fetch Data (Only when connected)
-  useEffect(() => {
-    if (connectionState !== 'connected') return;
-
-    const fetchData = async () => {
-      try {
-        const tmplRes = await fetch(`${registryUrl}/dev/templates`);
-
-        if (tmplRes.ok) {
-          const tmplData = await tmplRes.json();
-          setRemoteTemplates(Array.isArray(tmplData) ? tmplData : []);
-        }
-      } catch (err) {
-        console.warn("Data fetch failed despite healthy connection:", err);
-      }
-    };
-
-    fetchData();
-  }, [connectionState, registryUrl]);
-
-  // WebSocket for Real-time Events (Only when connected)
-  useEffect(() => {
-    if (connectionState !== 'connected') return;
-
-    // Registry URL ends in /api/v1, and we want /api/v1/ws
-    // So we just replace http with ws, keeping the path
-    const wsUrl = registryUrl.replace(/^http/, 'ws') + '/ws';
-    console.log("Connecting to WebSocket:", wsUrl);
-
-    let socket: WebSocket | null = null;
-    let reconnectTimer: any = null;
-
-    const connect = () => {
-      socket = new WebSocket(wsUrl);
-
-      socket.onopen = () => {
-        console.log("WebSocket connected");
-        setStatusType('success');
-        setStatus("Real-time Link Established");
-        setTimeout(() => setStatus(null), 3000);
-      };
-
-      socket.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'device_registered') {
-            const device = msg.payload;
-            setStatusType('info');
-            setStatus(`New Device: ${device.id}`);
-
-            // Device list refresh removed as we are no longer tracking devices in Studio
-            setTimeout(() => setStatus(null), 4000);
-          }
-        } catch (e) {
-          console.error("WS Parse Error", e);
-        }
-      };
-
-      socket.onclose = () => {
-        console.log("WebSocket disconnected");
-        // Don't auto-reconnect warmly if the whole app thinks it's offline, 
-        // but if we are 'connected', we might want to try to reconnect just the socket.
-        // For now, let's keep it simple: if socket dies, we might want to re-verify health.
-        if (connectionState === 'connected') {
-          reconnectTimer = setTimeout(connect, 3000);
-        }
-      };
-
-      socket.onerror = (err) => {
-        console.warn("WebSocket error", err);
-        socket?.close();
-      };
-    };
-
-    connect();
-
-    return () => {
-      if (socket) socket.close();
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-    };
-  }, [connectionState, registryUrl]);
-
-  const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true, style: { stroke: '#475569', strokeWidth: 1, strokeDasharray: '5,5' } }, eds)),
-    [setEdges]
+  // Business Logic Hooks
+  const studio = useStudioState();
+  const connection = usePlatformConnection(projectConfig, setStatus, setStatusType);
+  const editor = useEditorLogic(
+    studio.nodes,
+    projectConfig,
+    connection.registryUrl,
+    connection.connectionState,
+    monaco,
+    editorRef,
+    setStatus,
+    setStatusType
   );
-
-  const isValidConnection = useCallback(
-    (connection: Edge | Connection) => {
-      // No self-loops
-      if (connection.source === connection.target) return false;
-
-      // Prevent connecting TO the Boot Sequence (Input node)
-      const targetNode = nodes.find((n) => n.id === connection.target);
-      if (targetNode?.type === 'input') return false;
-
-      return true;
-    },
-    [nodes]
-  );
-
-  const onNodeClick = (_: any, node: Node) => {
-    setSelectedNode(node);
-    setSelectedEdge(null);
-  };
-
-  const onEdgeClick = (_: any, edge: Edge) => {
-    setSelectedEdge(edge);
-    setSelectedNode(null);
-  };
-
-  const onPaneClick = () => {
-    setSelectedNode(null);
-    setSelectedEdge(null);
-  };
-
-  const updateNodeData = (nodeId: string, newData: any) => {
-    setNodes((nds) =>
-      nds.map((node) => {
-        if (node.id === nodeId) {
-          return { ...node, data: { ...node.data, ...newData } };
-        }
-        return node;
-      })
-    );
-    if (selectedNode?.id === nodeId) {
-      setSelectedNode(prev => prev ? { ...prev, data: { ...prev.data, ...newData } } : null);
-    }
-  };
-
-  const deleteSelection = () => {
-    if (selectedNode) {
-      setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
-      setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
-      setSelectedNode(null);
-    }
-    if (selectedEdge) {
-      setEdges((eds) => eds.filter((e) => e.id !== selectedEdge.id));
-      setSelectedEdge(null);
-    }
-  };
-
-  const onDeploy = async () => {
-    setDeploying(true);
-    setStatusType('loading');
-    setStatus("Building industrial artifact...");
-    try {
-      const response = await fetch(`${registryUrl}/dev/build`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "visual-blink",
-          version: "1.0.0",
-          vdl: vdlPreview
-        })
-      });
-      if (response.ok) {
-        await response.json();
-        if (targetDevice === "all") {
-          setStatusType('success');
-          setStatus("Artifact registered in Cloud.");
-        } else {
-          setStatusType('loading');
-          setStatus(`Deploying to ${targetDevice}...`);
-
-          try {
-            const deployRes = await fetch(`${registryUrl}/dev/deploy`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                device_id: targetDevice,
-                artifact_id: "visual-blink-1.0.0"
-              })
-            });
-
-            if (deployRes.ok) {
-              setStatusType('success');
-              setStatus(`Flash Success: ${targetDevice} updated.`);
-            } else {
-              const error = await deployRes.text();
-              setStatusType('error');
-              setStatus(`Deploy Failed: ${error}`);
-            }
-          } catch (_err) {
-            setStatusType('error');
-            setStatus("Deploy Request Failed");
-          }
-        }
-      } else {
-        const error = await response.text();
-        setStatusType('error');
-        setStatus(`Build Failed: ${error}`);
-      }
-    } catch (_e) {
-      setStatusType('error');
-      setStatus("Registry Connection Failed");
-    } finally {
-      setDeploying(false);
-      setTimeout(() => setStatus(null), 4000);
-    }
-  };
-
-  const onDownload = async (e: React.MouseEvent) => {
-    e.preventDefault(); // Prevent any default button behavior (like form submission)
-    setStatusType('loading');
-    setStatus("Preparing download...");
-    try {
-      const response = await fetch(`${registryUrl}/dev/build`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "visual-blink",
-          version: "1.0.0",
-          vdl: vdlPreview
-        })
-      });
-
-      if (response.ok) {
-        const artifact = await response.json();
-
-        // Use anchor tag method to avoid popup blockers and force download
-        const link = document.createElement('a');
-        link.href = artifact.download_url;
-        link.setAttribute('download', `${artifact.name || 'artifact'}.vex`); // Hint filename
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-
-        setStatusType('success');
-        setStatus("Download Started");
-      } else {
-        setStatusType('error');
-        setStatus("Failed to generate .vex");
-      }
-    } catch (_e) {
-      setStatusType('error');
-      setStatus("Registry Offline");
-    } finally {
-      setTimeout(() => setStatus(null), 3000);
-    }
-  };
-
-  const onSimulate = async () => {
-    setSimulating(true);
-    setShowConsole(true);
-    setSimulationLogs([]);
-    setStatusType('loading');
-    setStatus("Starting Simulation...");
-
-    try {
-      const response = await fetch(`${registryUrl}/dev/simulate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vdl: vdlPreview,
-          payload: { "simulated": true }
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setSimulationLogs(data.logs || []);
-        setStatusType('success');
-        setStatus("Simulation Finished");
-      } else {
-        const err = await response.text();
-        setSimulationLogs([{ timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Failed: ${err}` }]);
-        setStatusType('error');
-        setStatus("Simulation Failed");
-      }
-    } catch (e: any) {
-      setSimulationLogs([{ timestamp: new Date().toLocaleTimeString(), level: 'error', message: `Connection Error: ${e.message}` }]);
-      setStatusType('error');
-      setStatus("Simulation Error");
-    } finally {
-      setSimulating(false);
-      setTimeout(() => setStatus(null), 3000);
-    }
-  };
-
-  const onDragOver = useCallback((event: React.DragEvent) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-  }, []);
-
-  const onDrop = useCallback(
-    (event: React.DragEvent) => {
-      event.preventDefault();
-      const data = event.dataTransfer.getData('application/reactflow');
-      if (!data || !reactFlowInstance) return;
-      const nodeData = JSON.parse(data);
-      const position = reactFlowInstance.screenToFlowPosition({
-        x: event.clientX,
-        y: event.clientY,
-      });
-      const newNode: Node = {
-        id: getId(),
-        type: 'action',
-        position,
-        data: {
-          label: nodeData.label,
-          type: nodeData.capability,
-          action: nodeData.action,
-          params: { ...nodeData.params }
-        },
-      };
-      setNodes((nds) => nds.concat(newNode));
-    },
-    [reactFlowInstance, setNodes]
-  );
-
-  const onLoadTemplate = useCallback((newNodes: Node[], newEdges: Edge[]) => {
-    setNodes(newNodes);
-    setEdges(newEdges);
-    setStatusType('info');
-    setStatus("Template Loaded Successfully");
-    setTimeout(() => setStatus(null), 2000);
-  }, [setNodes, setEdges]);
-
-  const vdlPreview = useMemo(() => {
-    const actionNodes = (nodes || [])
-      .filter((n) => n && n.id !== '1' && n.type === 'action')
-      .sort((a, b) => (a?.position?.y || 0) - (b?.position?.y || 0));
-
-    const steps = actionNodes
-      .map((n) => {
-        const d = n.data as any;
-        return `    - name: "${n.id}_${d.action}"\n      capability: "${d.type}"\n      action: "${d.action}"\n      params:\n${Object.entries(d.params || {}).map(([k, v]) => `        ${k}: ${typeof v === 'string' && !v.startsWith('0x') ? `"${v}"` : v}`).join('\n')}`;
-      })
-      .join('\n');
-
-    return `vdlVersion: "1.0"\nenvironment:\n  target: "${projectConfig.target}"\n  wifi:\n    ssid: "${projectConfig.wifi.ssid}"\n    password: "${projectConfig.wifi.password}"\n  mqtt:\n    broker: "${projectConfig.mqtt.broker}"\nflows:\n  main_loop:\n    steps:\n${steps}`;
-  }, [nodes, projectConfig]);
-
-  // Real-time Validation Effect
-  useEffect(() => {
-    if (!vdlPreview || connectionState !== 'connected') return;
-
-    const validate = async () => {
-      try {
-        const res = await fetch(`${registryUrl}/dev/validate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vdl: vdlPreview })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setValidationErrors(data.errors || []);
-
-          // Update Monaco Markers
-          if (monaco && editorRef.current) {
-            const model = editorRef.current.getModel();
-            if (model) {
-              const markers = (data.errors || []).map((err: any) => ({
-                startLineNumber: err.line || 1,
-                startColumn: 1,
-                endLineNumber: err.line || 1,
-                endColumn: 1000,
-                message: err.message,
-                severity: err.level === 'error' ? 8 : 4, // 8=Error, 4=Warning
-              }));
-              monaco.editor.setModelMarkers(model, 'owner', markers);
-            }
-          }
-        }
-      } catch (e) {
-        console.error("Validation failed", e);
-      }
-    };
-
-    const timer = setTimeout(validate, 800);
-    return () => clearTimeout(timer);
-  }, [vdlPreview, connectionState, registryUrl, monaco]);
 
   const parseVDL = (vdlStr: string): { nodes: Node[], edges: Edge[] } => {
     const newNodes: Node[] = [
@@ -552,22 +113,11 @@ function Studio() {
     return { nodes: newNodes, edges: newEdges };
   };
 
-  // Auto-centering when layout changes
-  useEffect(() => {
-    if (reactFlowInstance && (viewMode === 'split' || viewMode === 'visual')) {
-      // Delay slightly to allow the DOM to resize
-      const timer = setTimeout(() => {
-        reactFlowInstance.fitView({ duration: 600, padding: 0.2 });
-      }, 350);
-      return () => clearTimeout(timer);
-    }
-  }, [viewMode, orientation, isVdlFirst, reactFlowInstance]);
-
   // --------------------------------------------------------------------------
   // RENDER: Loading / Offline / Connected
   // --------------------------------------------------------------------------
 
-  if (connectionState === 'initializing' || connectionState === 'checking') {
+  if (connection.connectionState === 'initializing' || connection.connectionState === 'checking') {
     return (
       <div className="w-full h-full bg-[#0d0f14] flex flex-col items-center justify-center p-4">
         <Loader2 size={32} className="text-blue-500 animate-spin mb-4" />
@@ -577,7 +127,7 @@ function Studio() {
     );
   }
 
-  if (connectionState === 'offline') {
+  if (connection.connectionState === 'offline') {
     return (
       <div className="w-full h-full bg-[#0d0f14] flex flex-col items-center justify-center p-4">
         <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-6 border border-red-500/20">
@@ -586,17 +136,17 @@ function Studio() {
         <h2 className="text-white text-lg font-bold">Connection Failed</h2>
         <p className="text-slate-400 text-xs mt-2 mb-6 max-w-xs text-center leading-relaxed">
           Could not reach the Veex Platform Registry at <br />
-          <code className="bg-white/5 px-2 py-0.5 rounded text-red-300">{registryUrl}</code>
+          <code className="bg-white/5 px-2 py-0.5 rounded text-red-300">{connection.registryUrl}</code>
         </p>
 
-        {connectionError && (
+        {connection.connectionError && (
           <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-3 mb-6 max-w-sm text-center">
-            <span className="text-[10px] text-red-400 font-mono">{connectionError}</span>
+            <span className="text-[10px] text-red-400 font-mono">{connection.connectionError}</span>
           </div>
         )}
 
         <button
-          onClick={checkHealth}
+          onClick={connection.checkHealth}
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg text-sm font-bold transition shadow-lg shadow-blue-500/20"
         >
           <RefreshCw size={16} /> Retry Connection
@@ -607,428 +157,72 @@ function Studio() {
 
   return (
     <div className="w-full h-full bg-[#0d0f14] text-slate-100 flex flex-col overflow-hidden">
-      {/* Navbar */}
-      <nav className="h-14 shrink-0 border-b border-white/5 bg-[#131722]/80 backdrop-blur-xl flex items-center justify-between px-4 z-50">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
-              <Database size={14} className="text-white" />
-            </div>
-            <h1 className="font-bold text-sm tracking-tight flex items-center gap-2">
-              Veex <span className="text-slate-500 font-normal">Studio</span>
-            </h1>
-          </div>
-          <div className="h-4 w-px bg-white/10" />
-          <div className="flex items-center gap-4 text-[10px] text-slate-400 font-medium">
-            <div className="flex items-center gap-1.5 text-emerald-500/80">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]" />
-              Online
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsSettingsOpen(true)}
-            className="p-2 hover:bg-white/5 transition rounded-md text-slate-400 hover:text-white"
-            title="Project Settings"
-          >
-            <Settings size={16} />
-          </button>
-
-          {/* Target Selector Removed for Studio Focus - Defaulting to Cloud/All internally if needed */}
-          {/* 
-          <div className="flex items-center gap-2 bg-black/40 border border-white/5 rounded-md px-2 py-1">
-            <span className="text-[9px] font-bold text-slate-500 uppercase">Target:</span>
-            <select
-              value={targetDevice}
-              onChange={(e) => setTargetDevice(e.target.value)}
-              className="bg-transparent text-[10px] text-blue-400 outline-none cursor-pointer font-mono"
-            >
-              <option value="all">FROTA GERAL (Cloud)</option>
-              {Array.isArray(availableDevices) && availableDevices.map((d: any) => (
-                <option key={d.id} value={d.id}>{d.id} ({d.status})</option>
-              ))}
-            </select>
-          </div>
-          */}
-
-          <button
-            onClick={onDownload}
-            className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 transition rounded-md text-[10px] font-semibold text-slate-300 border border-white/10"
-          >
-            <Download size={12} /> .VEX
-          </button>
-
-          <button
-            onClick={onSimulate}
-            disabled={simulating}
-            className={`flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 transition rounded-md text-[10px] font-semibold text-green-400 border border-green-500/20 mr-2 ${simulating ? 'opacity-50' : ''}`}
-          >
-            <Play size={12} fill="currentColor" />
-            {simulating ? 'Running...' : 'Run'}
-          </button>
-
-          <div className="flex items-center">
-            <button
-              disabled={deploying}
-              onClick={onDeploy}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-l-md text-[10px] font-bold transition
-                ${deploying ? 'bg-blue-800' : 'bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-500/20'}`}
-            >
-              <Zap size={12} fill="currentColor" />
-              {deploying ? 'Deploying...' : targetDevice === 'all' ? 'Deploy to Fleet' : 'Instant Flash'}
-            </button>
-            <button className="bg-blue-600 hover:bg-blue-500 border-l border-white/10 px-1 py-1.5 rounded-r-md">
-              <ChevronDown size={14} />
-            </button>
-          </div>
-          <div className="ml-2 w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-white/10 hover:border-blue-500/50 transition cursor-pointer overflow-hidden">
-            <UserCircle size={20} className="text-slate-400" />
-          </div>
-        </div>
-      </nav>
+      <Navbar
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onDownload={editor.onDownload}
+        onSimulate={editor.onSimulate}
+        onDeploy={() => editor.onDeploy(targetDevice)}
+        simulating={editor.simulating}
+        deploying={editor.deploying}
+        targetDevice={targetDevice}
+      />
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Library */}
         <Library
-          onLoadTemplate={(nodes, edges) => onLoadTemplate(nodes, edges)}
-          remoteTemplates={remoteTemplates}
+          onLoadTemplate={studio.onLoadTemplate}
+          remoteTemplates={connection.remoteTemplates}
           parseVDL={parseVDL}
         />
 
-        {/* Center: Split View (XAML Designer Style) */}
-        <main className="flex-1 relative bg-[#0b0e14] flex flex-col overflow-hidden">
-          <div className={`flex-1 flex overflow-hidden ${orientation === 'vertical' ? 'flex-row' : 'flex-col'} ${isVdlFirst ? (orientation === 'vertical' ? 'flex-row-reverse' : 'flex-col-reverse') : ''}`}>
+        <Workspace
+          nodes={studio.nodes}
+          edges={studio.edges}
+          onNodesChange={studio.onNodesChange}
+          onEdgesChange={studio.onEdgesChange}
+          onConnect={studio.onConnect}
+          isValidConnection={studio.isValidConnection}
+          setReactFlowInstance={studio.setReactFlowInstance}
+          reactFlowInstance={studio.reactFlowInstance}
+          onNodeClick={studio.onNodeClick}
+          onEdgeClick={studio.onEdgeClick}
+          onPaneClick={studio.onPaneClick}
+          onDragOver={(e: any) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          }}
+          onDrop={studio.onDrop}
+          viewMode={viewMode}
+          orientation={orientation}
+          isVdlFirst={isVdlFirst}
+          setViewMode={setViewMode}
+          setOrientation={setOrientation}
+          setIsVdlFirst={setIsVdlFirst}
+          vdlPreview={editor.vdlPreview}
+          validationErrors={editor.validationErrors}
+          editorRef={editorRef}
+          nodeTypes={nodeTypes}
+        />
 
-            {/* Visual View (Graph) */}
-            {(viewMode === 'split' || viewMode === 'visual') && (
-              <div className="relative flex-1 bg-[#0b0e14] transition-all duration-300 overflow-hidden" onDragOver={onDragOver} onDrop={onDrop}>
-                <ReactFlow
-                  nodes={nodes}
-                  edges={edges}
-                  nodeTypes={nodeTypes}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={onConnect}
-                  isValidConnection={isValidConnection}
-                  onInit={setReactFlowInstance}
-                  onNodeClick={onNodeClick}
-                  onEdgeClick={onEdgeClick}
-                  onPaneClick={onPaneClick}
-                  fitView
-                >
-                  <Background variant={BackgroundVariant.Dots} color="#1e293b" gap={20} size={1} />
+        <Sidebar
+          selectedNode={studio.selectedNode}
+          selectedEdge={studio.selectedEdge}
+          viewMode={viewMode}
+          onSetViewMode={setViewMode}
+          updateNodeData={studio.updateNodeData}
+          deleteSelection={studio.deleteSelection}
+        />
+      </div>
 
-                  <Controls
-                    className="!bg-[#131722] !border-white/10 !fill-white shadow-xl"
-                    showInteractive={false}
-                  />
-                  <MiniMap
-                    style={{ backgroundColor: '#0d0f14' }}
-                    nodeColor="#1e293b"
-                    maskColor="rgba(0, 0, 0, 0.4)"
-                    className="border border-white/5 rounded-lg overflow-hidden !m-4"
-                  />
-                  <Panel position="top-right" className="bg-[#131722]/80 backdrop-blur-md border border-white/10 rounded-lg px-3 py-1.5 flex items-center gap-2 m-4 shadow-2xl">
-                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
-                      {viewMode === 'split' ? 'Multi-Window View' : 'Visual Focused'}
-                    </span>
-                  </Panel>
-
-                  {nodes.length === 1 && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-12 h-12 rounded-full border-2 border-dashed border-slate-500 flex items-center justify-center text-xl">+</div>
-                        <span className="text-xs font-medium tracking-widest uppercase text-[9px]">Start by dragging capabilities</span>
-                      </div>
-                    </div>
-                  )}
-                </ReactFlow>
-              </div>
-            )}
-
-            {/* Splitter Line */}
-            {viewMode === 'split' && (
-              <div className={`bg-white/5 ${orientation === 'vertical' ? 'w-px h-full' : 'h-px w-full'}`} />
-            )}
-
-            {/* Code View (VDL Editor) */}
-            {(viewMode === 'split' || viewMode === 'code') && (
-              <div className="relative flex-1 flex flex-col bg-[#0b0e14] transition-all duration-300 overflow-hidden">
-                {/* Editor Area */}
-                <div className="flex-1 overflow-hidden">
-                  <Editor
-                    height="100%"
-                    defaultLanguage="yaml"
-                    theme="vs-dark"
-                    value={vdlPreview}
-                    options={{
-                      minimap: { enabled: false },
-                      fontSize: 11,
-                      lineNumbers: 'on',
-                      scrollBeyondLastLine: false,
-                      automaticLayout: true,
-                      fontFamily: 'JetBrains Mono, monospace',
-                      padding: { top: 12, bottom: 12 },
-                    }}
-                    onMount={(editor) => {
-                      editorRef.current = editor;
-                    }}
-                  />
-                </div>
-
-                {/* Validation Errors Overlay */}
-                {validationErrors.length > 0 && (
-                  <div className="bg-red-950/40 border-t border-red-500/20 p-2 max-h-[100px] overflow-y-auto shrink-0">
-                    {validationErrors.map((err, i) => (
-                      <div key={i} className="text-[9px] text-red-300 font-mono flex items-start gap-2 mb-1 last:mb-0">
-                        <AlertCircle size={8} className="mt-0.5 shrink-0" />
-                        <span>Line {err.line}: {err.message}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* XAML-style Layout Control Toolbar */}
-          <div className="h-9 bg-[#131722] border-t border-white/5 flex items-center justify-between px-3 shrink-0 z-50 relative">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-1 bg-white/5 rounded p-0.5 border border-white/5">
-                <button
-                  onClick={() => setViewMode('visual')}
-                  className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition ${viewMode === 'visual' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                  title="Visual Only"
-                >
-                  Visual
-                </button>
-                <button
-                  onClick={() => setViewMode('split')}
-                  className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition ${viewMode === 'split' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                  title="Split View"
-                >
-                  Split
-                </button>
-                <button
-                  onClick={() => setViewMode('code')}
-                  className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider transition ${viewMode === 'code' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                  title="Code Only"
-                >
-                  Code
-                </button>
-              </div>
-
-              <div className="h-4 w-px bg-white/10" />
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setOrientation('vertical')}
-                  className={`p-1.5 rounded transition ${orientation === 'vertical' ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
-                  title="Vertical Split (Side-by-side)"
-                >
-                  <Columns size={12} />
-                </button>
-                <button
-                  onClick={() => setOrientation('horizontal')}
-                  className={`p-1.5 rounded transition ${orientation === 'horizontal' ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
-                  title="Horizontal Split (Stacked)"
-                >
-                  <Rows size={12} />
-                </button>
-                <div className="w-1" />
-                <button
-                  onClick={() => setIsVdlFirst(!isVdlFirst)}
-                  className="p-1.5 rounded text-slate-500 hover:text-blue-400 hover:bg-white/5 transition"
-                  title="Swap Positions"
-                >
-                  <ArrowLeftRight size={12} />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 text-[9px] font-bold text-slate-500 uppercase tracking-widest">
-              <span className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                Live Sync Active
-              </span>
-            </div>
-          </div>
-        </main>
-
-        {/* Right: Properties & VDL */}
-        <aside className="w-[300px] shrink-0 bg-[#131722]/50 backdrop-blur-3xl flex flex-col min-h-0 border-l border-white/5 transition-all duration-300">
-
-          {/* Properties Panel (Hidden when View is Code-only) */}
-          <div className={`flex flex-col min-h-0 transition-all duration-300 ${viewMode === 'code' ? 'h-0 opacity-0 overflow-hidden' : 'flex-1 opacity-100'}`}>
-            {selectedNode || selectedEdge ? (
-              <div className="flex-1 flex flex-col min-h-0">
-                <div className="p-4 border-b border-white/5 flex items-center justify-between">
-                  <h2 className="text-xs font-bold tracking-widest text-slate-400 uppercase">
-                    {selectedNode ? 'Properties' : 'Connection'}
-                  </h2>
-                  <div className="flex items-center gap-2">
-                    {viewMode !== 'split' && (
-                      <button
-                        onClick={() => setViewMode('split')}
-                        className="text-[9px] font-bold text-blue-500 hover:text-blue-400 transition flex items-center gap-1 bg-blue-500/5 px-2 py-1 rounded"
-                      >
-                        <Zap size={10} /> SPLIT VIEW
-                      </button>
-                    )}
-                    <button
-                      onClick={deleteSelection}
-                      className="text-slate-600 hover:text-red-500 transition p-1 rounded-md hover:bg-white/5"
-                      title="Delete Selection"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                </div>
-
-                {selectedNode ? (
-                  <div className="flex-1 p-4 flex flex-col gap-6 overflow-y-auto min-h-0">
-                    <div>
-                      <label className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block mb-1.5">Node Name</label>
-                      <input
-                        type="text"
-                        value={(selectedNode.data.label as string) || ''}
-                        onChange={(e) => updateNodeData(selectedNode.id, { label: e.target.value })}
-                        className="w-full bg-black/40 border border-white/10 rounded-lg py-1.5 px-3 text-[11px] outline-none focus:border-blue-500/50"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block mb-1.5">Capability</label>
-                      <div className="w-full bg-black/20 border border-white/10 rounded-lg py-1.5 px-3 text-[11px] text-slate-500 flex justify-between items-center select-none">
-                        {(selectedNode.data.type as string) || 'platform.core'}
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <label className="text-[9px] text-slate-500 font-bold uppercase tracking-wider block">Configuration</label>
-                      {Object.entries(selectedNode.data.params || {}).map(([key, value]) => (
-                        <div key={key} className="flex flex-col gap-1.5">
-                          <span className="text-[10px] text-slate-400 px-1">{key}</span>
-                          <input
-                            type="text"
-                            value={(value as string) || ''}
-                            onChange={(e) => {
-                              const oldParams = (selectedNode.data.params as Record<string, any>) || {};
-                              updateNodeData(selectedNode.id, { params: { ...oldParams, [key]: e.target.value } });
-                            }}
-                            className="w-full bg-black/40 border border-white/10 rounded-lg py-1.5 px-3 text-[11px] text-blue-300 outline-none focus:border-blue-500/50"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 p-8 text-center flex flex-col items-center justify-center gap-4 opacity-50">
-                    <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center">
-                      <div className="w-1.5 h-1.5 bg-slate-500 rounded-full" />
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400">Selected Connection</p>
-                      <p className="text-[9px] uppercase tracking-widest text-slate-600 mt-1 font-mono">{selectedEdge?.id}</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="flex-1 p-8 text-center flex flex-col items-center justify-center gap-4 opacity-20">
-                <ListTree size={32} />
-                <p className="text-[10px] font-bold uppercase tracking-widest">Select a node or edge to edit</p>
-              </div>
-            )}
-          </div>
-
-          {!selectedNode && !selectedEdge && viewMode !== 'split' && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <button
-                onClick={() => setViewMode('split')}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-[10px] font-bold tracking-widest transition flex items-center gap-2 shadow-xl shadow-blue-500/20"
-              >
-                <Monitor size={12} fill="currentColor" /> ENABLE SPLIT VIEW
-              </button>
-            </div>
-          )}
-        </aside>
-      </div >
-
-      <AnimatePresence>
-        {showConsole && (
-          <motion.div
-            initial={{ y: 200 }}
-            animate={{ y: 0 }}
-            exit={{ y: 200 }}
-            className="absolute bottom-0 left-0 right-[300px] h-[200px] bg-[#0b0e14] border-t border-white/5 z-40 flex flex-col shadow-2xl"
-          >
-            <div className="h-8 bg-white/5 flex items-center justify-between px-4 border-b border-white/5">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                <Terminal size={12} className="text-green-500" />
-                Simulation Console
-              </div>
-              <button
-                onClick={() => setShowConsole(false)}
-                className="p-1 hover:text-white text-slate-500"
-              >
-                <Minimize2 size={12} />
-              </button>
-            </div>
-            <div className="flex-1 overflow-auto p-4 font-mono text-[11px] space-y-1">
-              {simulationLogs.length === 0 ? (
-                <span className="text-slate-600 block italic">Waiting for execution...</span>
-              ) : (
-                simulationLogs.map((log, i) => (
-                  <div key={i} className="flex items-start gap-3 border-b border-white/5 pb-1 mb-1 last:border-0">
-                    <span className="text-slate-500 shrink-0">{log.timestamp}</span>
-                    <span className={`font-bold uppercase tracking-wider w-16 shrink-0 
-                      ${log.level === 'error' ? 'text-red-500' :
-                        log.level === 'warn' ? 'text-yellow-500' :
-                          log.level === 'success' ? 'text-green-500' : 'text-blue-400'}`}>
-                      [{log.level}]
-                    </span>
-                    <span className="text-slate-300">{log.message}</span>
-                    {log.step_id && <span className="ml-auto text-slate-600 text-[9px] bg-white/5 px-2 rounded">{log.step_id}</span>}
-                  </div>
-                ))
-              )}
-              {simulating && (
-                <div className="flex items-center gap-2 mt-2">
-                  <Loader2 size={12} className="animate-spin text-blue-500" />
-                  <span className="text-blue-500">Executing steps...</span>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {status && (
-          <motion.div
-            initial={{ y: 50, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 50, opacity: 0 }}
-            className={`
-              absolute bottom-6 left-1/2 -translate-x-1/2 z-[100] px-6 py-2 rounded-full text-[10px] font-bold shadow-2xl border flex items-center gap-2
-              ${statusType === 'success' ? 'bg-emerald-600 border-emerald-400/20 text-white' :
-                statusType === 'error' ? 'bg-red-600 border-red-400/20 text-white' :
-                  statusType === 'loading' ? 'bg-blue-600 border-blue-400/20 text-white' :
-                    'bg-slate-800 border-white/10 text-slate-200'}
-            `}
-          >
-            {statusType === 'loading' && <Loader2 size={12} className="animate-spin" />}
-            {statusType === 'success' && <CheckCircle2 size={12} />}
-            {statusType === 'error' && <AlertCircle size={12} />}
-            {statusType === 'info' && <Info size={12} />}
-            {status}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {status && (
+        <div className={`fixed bottom-12 left-1/2 -translate-x-1/2 z-[100] px-4 py-2 rounded-lg shadow-2xl border backdrop-blur-md flex items-center gap-3 animate-in fade-in slide-in-from-bottom-4
+          ${statusType === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+            statusType === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' :
+              'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}
+        >
+          {statusType === 'loading' && <Loader2 size={14} className="animate-spin" />}
+          <span className="text-[10px] font-bold uppercase tracking-widest">{status}</span>
+        </div>
+      )}
 
       <SettingsModal
         isOpen={isSettingsOpen}
@@ -1036,7 +230,7 @@ function Studio() {
         config={projectConfig}
         onSave={setProjectConfig}
       />
-    </div >
+    </div>
   );
 }
 
