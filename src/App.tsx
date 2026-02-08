@@ -135,10 +135,9 @@ function Studio() {
   useEffect(() => {
     if (connectionState !== 'connected') return;
 
-    // Convert http(s) to ws(s) and ensure we strip API path
-    // registryUrl usually ends in /api/v1, but WS is at root /ws
-    const baseUrl = registryUrl.replace(/\/api\/v1\/?$/, '');
-    const wsUrl = baseUrl.replace(/^http/, 'ws') + '/ws';
+    // Registry URL ends in /api/v1, and we want /api/v1/ws
+    // So we just replace http with ws, keeping the path
+    const wsUrl = registryUrl.replace(/^http/, 'ws') + '/ws';
     console.log("Connecting to WebSocket:", wsUrl);
 
     let socket: WebSocket | null = null;
@@ -314,7 +313,8 @@ function Studio() {
     }
   };
 
-  const onDownload = async () => {
+  const onDownload = async (e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent any default button behavior (like form submission)
     setStatusType('loading');
     setStatus("Preparing download...");
     try {
@@ -330,7 +330,15 @@ function Studio() {
 
       if (response.ok) {
         const artifact = await response.json();
-        window.open(artifact.download_url, '_blank');
+
+        // Use anchor tag method to avoid popup blockers and force download
+        const link = document.createElement('a');
+        link.href = artifact.download_url;
+        link.setAttribute('download', `${artifact.name || 'artifact'}.vex`); // Hint filename
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
         setStatusType('success');
         setStatus("Download Started");
       } else {
