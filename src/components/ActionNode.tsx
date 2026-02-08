@@ -26,13 +26,23 @@ const colorMap: Record<string, string> = {
 };
 
 export default function ActionNode({ data, selected }: NodeProps) {
+    // We'll use the id and a custom context or just data to determine active state.
+    // For simplicity with xyflow, we'll assume 'active' is passed in data or we can extend NodeProps.
+    const isActive = data.isActive === true;
     const capability = (data.type as string) || 'platform.core';
     const Icon = iconMap[capability] || <Zap size={12} />;
     const theme = colorMap[capability] || 'from-blue-600/40 text-blue-400';
     const params = (data.params as Record<string, any>) || {};
 
     return (
-        <div className={`min-w-[170px] bg-[#131722]/95 backdrop-blur-xl border-2 ${selected ? 'border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.5)]' : 'border-white/5'} rounded-xl shadow-2xl overflow-hidden transition-all duration-300 group`}>
+        <div className={`min-w-[170px] bg-[#131722]/95 backdrop-blur-xl border-2 
+          ${selected ? 'border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.5)]' :
+                isActive ? 'border-blue-400 shadow-[0_0_25px_rgba(59,130,246,0.6)] animate-pulse' : 'border-white/5'} 
+          rounded-xl shadow-2xl overflow-hidden transition-all duration-300 group relative`}>
+
+            {isActive && (
+                <div className="absolute inset-0 bg-blue-500/10 animate-ping pointer-events-none" />
+            )}
             {/* Capability Header */}
             <div className={`px-3 py-1.5 bg-gradient-to-r ${theme.split(' ')[0]} to-transparent flex items-center gap-2 border-b border-white/5`}>
                 <span className={theme.split(' ')[1]}>{Icon}</span>

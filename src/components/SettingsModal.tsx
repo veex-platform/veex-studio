@@ -1,4 +1,4 @@
-import { X, Save, Server, Wifi, Cpu } from 'lucide-react';
+import { X, Save, Server, Wifi, Cpu, Shield, Download, Bluetooth } from 'lucide-react';
 import { useState } from 'react';
 
 interface SettingsProps {
@@ -113,6 +113,50 @@ export default function SettingsModal({ isOpen, onClose, config, onSave }: Setti
                                 onChange={(e) => handleChange('registry', 'url', e.target.value)}
                                 className="w-full bg-black/40 border border-white/10 rounded px-3 py-1.5 text-[11px] text-slate-300 outline-none focus:border-blue-500/50 font-mono"
                             />
+                        </div>
+                    </div>
+
+                    {/* Secrets Manager Section */}
+                    <div className="pt-6 border-t border-white/5 space-y-4">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                            <Shield size={12} className="text-amber-400" /> Secrets Manager
+                        </label>
+
+                        <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/10 space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <p className="text-[11px] font-bold text-amber-200">Device Provisioning</p>
+                                    <p className="text-[9px] text-slate-500">Generate credentials for local flash</p>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        const blob = new Blob([JSON.stringify(localConfig, null, 2)], { type: 'application/json' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = 'secrets.json';
+                                        a.click();
+                                    }}
+                                    className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-500 rounded text-[9px] font-black uppercase tracking-widest flex items-center gap-2 transition"
+                                >
+                                    <Download size={10} /> secrets.json
+                                </button>
+                            </div>
+
+                            <div className="h-px bg-white/5" />
+
+                            <button className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-white/5 transition group text-left">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400">
+                                        <Bluetooth size={14} />
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-bold text-slate-300">Provision via Serial</p>
+                                        <p className="text-[9px] text-slate-500">Connect device via USB to sync</p>
+                                    </div>
+                                </div>
+                                <div className="text-[9px] bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded font-bold">BETA</div>
+                            </button>
                         </div>
                     </div>
 
